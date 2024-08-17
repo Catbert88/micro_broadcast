@@ -1,0 +1,5 @@
+The server will host a TCP server that all clients will point to.
+
+Upon boot up, the client will connect to the server and listen for any commands. 
+
+The server will also host a website that will allow user access to control all connected clients.
