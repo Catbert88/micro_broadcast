@@ -1,4 +1,4 @@
-The server will host a TCP server that all clients will point to.
+The server will host a TCP server that all clients will point to. Clients should use websockets.
 
 Upon boot up, the client will connect to the server and listen for any commands. 
 

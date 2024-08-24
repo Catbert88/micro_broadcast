@@ -1,7 +1,7 @@
-all: build_client build_server
+build: build_client build_server
 
 build_client:
-	cd client && cargo build --release -p client --target riscv32imc-unknown-none-elf
+	cd client && cargo build --release -p client 
 
 build_server:
 	cd server && cargo build --release -p server
