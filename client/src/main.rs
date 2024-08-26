@@ -5,6 +5,12 @@ use std::{
     time::Duration,
 };
 
+use std::net::TcpStream;
+use std::net::Ipv4Addr;
+use std::io::Write;
+
+use esp_idf_svc::ipv4::SocketAddrV4;
+
 use anyhow::Result;
 use config;
 use embedded_graphics::{
@@ -13,7 +19,7 @@ use embedded_graphics::{
     prelude::*,
     text::{Baseline, Text},
 };
-use embedded_svc::{http::Method, io::Write};
+use embedded_svc::{http::Method, io::Write as svc_write};
 use esp_idf_svc::{
     eventloop::EspSystemEventLoop,
     hal::{
@@ -93,8 +99,26 @@ fn main() -> Result<()> {
 
     println!("Server awaiting connection");
 
-    // Prevent program from exiting
+
+    // Replace with your server's IP and port
+    let server_addr = SocketAddrV4::new(Ipv4Addr::new(192, 168, 4, 209), 8051);
+
     loop {
+        println!("Connecting to server at {:?}", server_addr);
+
+        match TcpStream::connect(server_addr)
+        {
+            Ok(stream) => {
+                let mut stream = TcpStream::connect(server_addr)?;
+                //println!("Connected to server on {:?}, sending data...", stream.local_addr().unwrap().port());
+
+                stream.write_all(b"Hello from ESP32!")?;
+
+            }
+            Err(error) => println!("connection error: {}", error),
+        }
+
+        // Prevent program from exiting
         sleep(Duration::from_millis(1000));
     }
 }
