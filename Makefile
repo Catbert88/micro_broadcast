@@ -14,5 +14,8 @@ build_server:
 run_client:
 	cd client && cargo run --release -p client 
 
+run_local_server:
+	cd server && cargo run --release -p server
+
 run_server: build_server
 	rsync -t -r -avz -e "ssh -o StrictHostKeyChecking=no" target/arm-unknown-linux-gnueabihf/release/server  pi@192.168.4.209:/home/pi/tmp/mb_server.rs

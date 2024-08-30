@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Messaging and Timers</title>
+    <title>Micro Broadcast</title>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -17,6 +17,7 @@
         }
         table {
             width: 100%;
+            max-width: 800px; /* Added max-width */
             border-collapse: collapse;
             margin-bottom: 20px;
         }
@@ -47,8 +48,10 @@
             background-color: #4CAF50;
             color: white;
             border: none;
+            border-radius: 20px;
             cursor: pointer;
             margin-right: 5px;
+            white-space: nowrap; /* Prevent button text from wrapping */
         }
         button:hover {
             background-color: #45a049;
@@ -64,94 +67,170 @@
             align-items: center;
         }
         .duration-cell input {
+            width: 40px;
             flex: 1;
             margin-right: 5px;
+        }
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            overflow: auto;
+            background-color: rgba(0,0,0,0.4);
+        }
+        .modal-content {
+            background-color: #fefefe;
+            margin: 15% auto;
+            padding: 20px;
+            border: 1px solid #888;
+            width: 80%;
+            max-width: 500px;
+        }
+        .close {
+            color: #aaa;
+            float: right;
+            font-size: 28px;
+            font-weight: bold;
+        }
+        .close:hover,
+        .close:focus {
+            color: black;
+            text-decoration: none;
+            cursor: pointer;
+        }
+        #messageInput {
+            width: 100%;
+            height: 100px;
+            margin-bottom: 10px;
+        }
+        /* New styles for column widths */
+        .id-column {
+            width: 10%;
+        }
+        .message-column {
+          width: 60%;
+        }
+        .action-column {
+          width: 80px;
+          text-align: center;
+        }
+        .add-time-column {
+          width: 80px;
+          text-align: center;
+        }
+        .current-column {
+          width: 80px;
+          text-align: center;
         }
     </style>
 </head>
 <body>
-    <h1>MB Portal (Micro-Broadcasting)</h2>
+    <h1>MB Control </h2>
     <h2>Messaging</h2>
-    
+
     <table>
         <thead>
             <tr>
-                <th>ID</th>
-                <th>Message</th>
-                <th>Send</th>
+                <th class="id-column">ID</th>
+                <th class="message-column">Message</th>
+                <th class="action-column">Send</th>
             </tr>
         </thead>
         <tbody>
-            <!-- Broadcast Row -->
             <tr class="broadcast-row">
-                <td>Broadcast</td>
-                <td><input type="text" value="System will be down for maintenance at 14:00." /></td>
-                <td><button>Send</button></td>
+                <td class="id-column">Broadcast</td>
+                <td class="message-column"><input type="text" readonly value="" onclick="openModal(this)" /></td>
+                <td class="action-column"><button>Send</button></td>
             </tr>
-            <!-- Divider Row -->
             <tr class="divider-row">
                 <td colspan="3"></td>
             </tr>
-            <!-- Regular Rows -->
+            <% for slave in slaves { %> 
             <tr>
-                <td>001</td>
-                <td><input type="text" value="Hello, Bob!" /></td>
-                <td><button>Send</button></td>
+              <td class="id-column"><%=slave.mac_address%></td>
+                <td class="message-column"><input type="text" readonly value="" onclick="openModal(this)" /></td>
+                <td class="action-column"><button>Send</button></td>
             </tr>
-            <tr>
-                <td>002</td>
-                <td><input type="text" value="Hi, Alice!" /></td>
-                <td><button>Send</button></td>
-            </tr>
+            <% } %>
         </tbody>
     </table>
 
     <h2>Timers</h2>
-    
+
     <table>
         <thead>
             <tr>
-                <th>ID</th>
+                <th class="id-column">ID</th>
                 <th>Duration (minutes)</th>
-                <th>Add Time</th>
+                <th class="add-time-column">Add Time</th>
                 <th>Current</th>
             </tr>
         </thead>
         <tbody>
-            <!-- Broadcast Row -->
             <tr class="broadcast-row">
-                <td>Broadcast</td>
+                <td class="id-column">Broadcast</td>
                 <td class="duration-cell">
                     <input type="text" value="60" />
                     <button>Start</button>
                 </td>
-                <td><button class="add-time-btn">+5</button></td>
+                <td class="add-time-column"><button class="add-time-btn">+5</button></td>
                 <td></td>
             </tr>
-            <!-- Divider Row -->
             <tr class="divider-row">
                 <td colspan="4"></td>
             </tr>
-            <!-- Regular Rows -->
+            <% for slave in slaves { %> 
             <tr>
-                <td>T001</td>
+              <td class="id-column"><%=slave.mac_address%></td>
                 <td class="duration-cell">
                     <input type="text" value="60" />
                     <button>Start</button>
                 </td>
-                <td><button class="add-time-btn">+5</button></td>
+                <td class="add-time-column"><button class="add-time-btn">+5</button></td>
                 <td>00:00</td>
             </tr>
-            <tr>
-                <td>T002</td>
-                <td class="duration-cell">
-                    <input type="text" value="60" />
-                    <button>Start</button>
-                </td>
-                <td><button class="add-time-btn">+5</button></td>
-                <td>00:00</td>
-            </tr>
+            <% } %>
         </tbody>
     </table>
+
+    <div id="messageModal" class="modal">
+        <div class="modal-content">
+            <span class="close">&times;</span>
+            <textarea id="messageInput"></textarea>
+            <button onclick="saveMessage()">Save</button>
+        </div>
+    </div>
+
+    <script>
+        let currentInput;
+        const modal = document.getElementById("messageModal");
+        const messageInput = document.getElementById("messageInput");
+        const span = document.getElementsByClassName("close")[0];
+
+        function openModal(input) {
+            currentInput = input;
+            messageInput.value = input.value;
+            modal.style.display = "block";
+        }
+
+        span.onclick = function() {
+            modal.style.display = "none";
+        }
+
+        window.onclick = function(event) {
+            if (event.target == modal) {
+                modal.style.display = "none";
+            }
+        }
+
+        function saveMessage() {
+            currentInput.value = messageInput.value;
+            modal.style.display = "none";
+        }
+    </script>
 </body>
 </html>

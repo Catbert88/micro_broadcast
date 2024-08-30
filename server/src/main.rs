@@ -9,17 +9,15 @@ use sailfish::TemplateOnce;
 
 use tokio::io::AsyncReadExt;
 
-#[derive(PartialEq)]
-enum TemplateFormat {
-    Portal,
-    Report,
+struct MicroSlave {
+    mac_address: String,
+    ip_address: String,
 }
 
 #[derive(TemplateOnce)] // automatically implement `TemplateOnce` trait
 #[template(path = "portal.stpl")] // specify the path to template
-struct PortalTemplate {
-    // data to be passed to the template
-    format: TemplateFormat,
+struct PortalTemplate<'a> {
+    slaves: &'a Vec<MicroSlave>,
 }
 
 async fn process_socket(mut socket: tokio::net::TcpStream) {
@@ -52,8 +50,12 @@ async fn process_socket(mut socket: tokio::net::TcpStream) {
 
 
 async fn handler() -> Html<String> {
+    let mut slaves: Vec<MicroSlave> = Vec::new();
+    slaves.push(MicroSlave {mac_address: "Georgia".to_string(), ip_address: "144".to_string()});
+    slaves.push(MicroSlave {mac_address: "Asher".to_string(), ip_address: "144".to_string()});
+    slaves.push(MicroSlave {mac_address: "Lila".to_string(), ip_address: "144".to_string()});
     let portal = PortalTemplate {
-        format: TemplateFormat::Portal,
+        slaves: &slaves,
     };
 
     let html_content = portal.render_once().unwrap();
