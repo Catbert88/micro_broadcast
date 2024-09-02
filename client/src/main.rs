@@ -6,8 +6,13 @@ use std::{
 };
 
 use std::net::TcpStream;
+use std::net::TcpListener;
 use std::net::Ipv4Addr;
 use std::io::Write;
+use std::io::Read;
+//use esp_idf_svc::io::ErrorKind;
+use std::io::ErrorKind;
+use std::time::Instant;
 
 use esp_idf_svc::ipv4::SocketAddrV4;
 
@@ -57,14 +62,11 @@ fn main() -> Result<()> {
         .text_color(BinaryColor::On)
         .build();
 
-    Text::with_baseline("Hello world!", Point::zero(), text_style, Baseline::Top)
-        .draw(&mut *display)
-        .unwrap();
-
-    Text::with_baseline("Hello Rust!", Point::new(0, 16), text_style, Baseline::Top)
+    Text::with_baseline("Connecting...", Point::zero(), text_style, Baseline::Top)
         .draw(&mut *display)
         .unwrap();
     display.flush().unwrap();
+
 
     // Connect to the Wi-Fi network
     let _wifi = wifi(
@@ -74,74 +76,67 @@ fn main() -> Result<()> {
         sysloop,
     )?;
 
-    // Set the HTTP server
-    let mut server = EspHttpServer::new(&Configuration::default())?;
+    Text::with_baseline("Connected!", Point::new(0, 16), text_style, Baseline::Top)
+        .draw(&mut *display)
+        .unwrap();
+    display.flush().unwrap();
+
 
     let display_access = Arc::new(Mutex::new(display));
-    // http://<sta ip>/ handler
-    server.fn_handler(
-        "/",
-        Method::Get,
-        move |request| -> core::result::Result<(), EspIOError> {
-            let html = index_html();
-            let mut response = request.into_ok_response()?;
-
-            let mut display = display_access.lock().unwrap();
-            Text::with_baseline("Hello Rust!", Point::new(0, 32), text_style, Baseline::Top)
-                .draw(&mut **display)
-                .unwrap();
-            display.flush().unwrap();
-
-            response.write_all(html.as_bytes())?;
-            Ok(())
-        },
-    )?;
-
-    println!("Server awaiting connection");
-
 
     // Replace with your server's IP and port
-    let server_addr = SocketAddrV4::new(Ipv4Addr::new(192, 168, 4, 209), 8051);
+    // let server_addr = SocketAddrV4::new(Ipv4Addr::new(192, 168, 4, 209), 8092);
+    let server_addr = SocketAddrV4::new(Ipv4Addr::new(192, 168, 4, 222), 8092);
 
     loop {
-        println!("Connecting to server at {:?}", server_addr);
+        println!("Searching for MicroBroadcaster at {:?}", server_addr);
 
         match TcpStream::connect(server_addr)
         {
-            Ok(stream) => {
-                let mut stream = TcpStream::connect(server_addr)?;
-                //println!("Connected to server on {:?}, sending data...", stream.local_addr().unwrap().port());
-
+            Ok(mut stream) => {
                 stream.write_all(b"Hello from ESP32!")?;
-
+            },
+            Err(error) => {
+                println!("Invalid Response: {}", error);
+                std::thread::sleep(Duration::from_millis(1000));
+                continue;
             }
-            Err(error) => println!("connection error: {}", error),
         }
 
-        // Prevent program from exiting
-        sleep(Duration::from_millis(1000));
+        // now read until an error occurs then break out of the loop
+        let listener = TcpListener::bind("0.0.0.0:8092").unwrap();
+        listener.set_nonblocking(true)?;
+
+        let timeout = Duration::from_secs(5);
+        let mut start_time = Instant::now();
+
+        loop {
+            match listener.accept() {
+                Ok((mut socket, addr)) => {
+                    start_time = Instant::now();
+                    socket.set_read_timeout(Some(Duration::new(1, 0)))?;
+                    let mut cmd = "".to_string();
+                    match socket.read_to_string(&mut cmd) {
+                        Ok(n) => (),
+                        Err(e) => {
+                            println!("Read Error: {}", e);
+                            break;
+                        }
+                    }
+                    println!("Received Directive: {}", &cmd);
+                }
+                Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
+                    // No incoming connection, check if we should timeout
+                    if start_time.elapsed() >= timeout {
+                        println!("Timeout reached, breaking out of accept loop");
+                        break;
+                    }
+                    // Optional: sleep for a short duration to avoid busy-waiting
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+                Err(e) => break
+            }
+
+        }
     }
-}
-
-fn templated(content: impl AsRef<str>) -> String {
-    format!(
-        r#"
-<!DOCTYPE html>
-<html>
-<meta name="viewport" content="width=device-width, initial-scale=1">
-    <head>
-        <meta charset="utf-8">
-        <title>esp-rs web server</title>
-    </head>
-    <body>
-        {}
-    </body>
-</html>
-"#,
-        content.as_ref()
-    )
-}
-
-fn index_html() -> String {
-    templated("Hello from ESP32-C3!")
 }
