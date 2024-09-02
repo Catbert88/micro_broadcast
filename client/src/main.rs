@@ -82,7 +82,7 @@ fn main() -> Result<()> {
     display.flush().unwrap();
 
 
-    let display_access = Arc::new(Mutex::new(display));
+    //let display_access = Arc::new(Mutex::new(display));
 
     // Replace with your server's IP and port
     // let server_addr = SocketAddrV4::new(Ipv4Addr::new(192, 168, 4, 209), 8092);
@@ -124,6 +124,10 @@ fn main() -> Result<()> {
                         }
                     }
                     println!("Received Directive: {}", &cmd);
+                    Text::with_baseline(&cmd, Point::new(0, 32), text_style, Baseline::Top)
+                        .draw(&mut *display)
+                        .unwrap();
+                    display.flush().unwrap();
                 }
                 Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
                     // No incoming connection, check if we should timeout
