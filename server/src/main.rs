@@ -13,6 +13,7 @@ use sailfish::TemplateOnce;
 use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
 use tokio::time::Duration;
+use tokio::time::timeout;
 
 // One thread is broadcasting to all active slaves. If there is an issue communicating to a slave,
 // that slave is dropped.
@@ -49,6 +50,7 @@ async fn register_slave(registry: &Arc<Mutex<Vec<MicroSlave>>>, mut socket: toki
                 let rx_address = SocketAddr::new(address.ip(), 8092);
                 let mut active_registry = registry.lock().unwrap();
                 println!("Registering MicroSlave with address: {} saying {}", address,  std::str::from_utf8(&buffer[..n]).unwrap_or("[Invalid UTF-8]"));
+                active_registry.retain(|s| s.ip_address != rx_address);
                 active_registry.push(MicroSlave {mac_address: "hi".to_string(), ip_address: rx_address });
                 // Print out the received data
             }
@@ -94,14 +96,18 @@ async fn main() {
 
     // Register thread
     tokio::spawn(async move {
+
+        println!("Opening Registration");
         let registration_channel = tokio::net::TcpListener::bind("0.0.0.0:8092").await.unwrap();
 
         loop {
-            println!("Checking clients");
+            println!("Checking Registration Requests");
+
             match registration_channel.accept().await {
                 Ok((socket, _)) => register_slave(&slave_registry, socket).await,
                 Err(error) => println!("Connection failed: {}", error),
             };
+            std::thread::sleep(Duration::from_millis(1000));
         }
     });
 
@@ -115,24 +121,34 @@ async fn main() {
                 slave_snapshot = slave_receivers.lock().unwrap().clone();
             }
 
+            println!("broadcasting to {} slave", slave_snapshot.len());
             for slave in slave_snapshot
             {
-                match tokio::net::TcpStream::connect(slave.ip_address).await {
-                    Ok(mut stream) => {
-                        println!("broadcasting to slave");
-                        match stream.write_all(b"start timer").await {
-                            Ok(()) => println!("wrote to slave"),
+                match timeout(Duration::from_millis(5000), tokio::net::TcpStream::connect(slave.ip_address)).await {
+                    Ok(stream_s) => {
+                        match stream_s {
+                            Ok(mut stream) => {
+                                println!("broadcasting to slave");
+                                match stream.write_all(b"start timer").await {
+                                    Ok(()) => println!("wrote to slave"),
+                                    Err(e) => {
+                                        println!("removeing slave after write failure. {}", e);
+                                    },
+                                };
+                            },
                             Err(e) => {
                                 println!("removeing slave after write failure. {}", e);
-                            },
+                            }
                         }
                     },
                     Err(e) => {
                         println!("removeing slave after connect failures. {}", e);
+                        slave_receivers.lock().unwrap().retain(|s| s.ip_address != slave.ip_address);
                     }
                 }
             }
-            std::thread::sleep(Duration::from_millis(1000));
+
+            tokio::time::sleep(Duration::from_millis(1000)).await;
         }
 
     });

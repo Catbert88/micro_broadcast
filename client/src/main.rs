@@ -94,7 +94,11 @@ fn main() -> Result<()> {
         match TcpStream::connect(server_addr)
         {
             Ok(mut stream) => {
-                stream.write_all(b"Hello from ESP32!")?;
+                println!("Sending Registration request.");
+                match stream.write_all(b"REGISTER") {
+                    Ok(n) => println!("Registration Successfull"),
+                    Err(e) => println!("Registration failed {}", e)
+                };
             },
             Err(error) => {
                 println!("Invalid Response: {}", error);
