@@ -15,6 +15,8 @@ use tokio::io::AsyncWriteExt;
 use tokio::time::Duration;
 use tokio::time::timeout;
 
+use axum::extract::State;
+
 // One thread is broadcasting to all active slaves. If there is an issue communicating to a slave,
 // that slave is dropped.
 // Another thread is broadcasting to all known slave devices
@@ -23,6 +25,10 @@ use tokio::time::timeout;
 struct MicroSlave {
     mac_address: String,
     ip_address: SocketAddr,
+}
+
+struct AppState {
+    slaves: Arc<Mutex<Vec<MicroSlave>>>
 }
 
 #[derive(TemplateOnce)] // automatically implement `TemplateOnce` trait
@@ -43,17 +49,34 @@ async fn register_slave(registry: &Arc<Mutex<Vec<MicroSlave>>>, mut socket: toki
             Ok(0) => {
                 // Connection was closed by the client
                 println!("Client disconnected.");
+
+                let message = std::str::from_utf8(&buffer).unwrap_or("[Invalid UTF-8]");
+                println!("Message: {}", message);
+
+                let mut parts = message.split_ascii_whitespace();
+                match parts.next() {
+                    Some("REGISTER") => {
+                        match parts.next() {
+                            Some(mac_address) => {
+                                let address = socket.peer_addr().unwrap();
+                                let rx_address = SocketAddr::new(address.ip(), config::BROADCAST_PORT);
+
+                                println!("Registering MicroSlave {} ip_address: {}", mac_address, address);
+                                let mut active_registry = registry.lock().unwrap();
+                                active_registry.retain(|s| s.ip_address != rx_address);
+                                active_registry.push(MicroSlave {mac_address: mac_address.to_string(), ip_address: rx_address });
+
+                            },
+                            None => {
+                            }
+                        };
+                    },
+                    Some(_) => println!("Invalid Request"),
+                    None => println!("Invalid Request"),
+                };
                 break;
             }
-            Ok(n) => {
-                let address = socket.peer_addr().unwrap();
-                let rx_address = SocketAddr::new(address.ip(), 8092);
-                let mut active_registry = registry.lock().unwrap();
-                println!("Registering MicroSlave with address: {} saying {}", address,  std::str::from_utf8(&buffer[..n]).unwrap_or("[Invalid UTF-8]"));
-                active_registry.retain(|s| s.ip_address != rx_address);
-                active_registry.push(MicroSlave {mac_address: "hi".to_string(), ip_address: rx_address });
-                // Print out the received data
-            }
+            Ok(_n) => (),
             Err(e) => {
                 // An error occurred while reading
                 println!("Failed to read from socket: {}", e);
@@ -65,13 +88,10 @@ async fn register_slave(registry: &Arc<Mutex<Vec<MicroSlave>>>, mut socket: toki
 }
 
 
-async fn handler() -> Html<String> {
-    let mut slaves: Vec<MicroSlave> = Vec::new();
-    //slaves.push(MicroSlave {mac_address: "Georgia".to_string(), ip_address: "144".to_string()});
-    //slaves.push(MicroSlave {mac_address: "Asher".to_string(), ip_address: "144".to_string()});
-    //slaves.push(MicroSlave {mac_address: "Lila".to_string(), ip_address: "144".to_string()});
+async fn handler(State(state): State<Arc<AppState>>) -> Html<String> {
+
     let portal = PortalTemplate {
-        slaves: &slaves,
+        slaves: &state.slaves.lock().unwrap(),
     };
 
     let html_content = portal.render_once().unwrap();
@@ -83,14 +103,13 @@ async fn main() {
 
     // build our application with a single route
 
-    let mut slaves: Vec<MicroSlave> = Vec::new();
-    //slaves.push(MicroSlave {mac_address: "Georgia".to_string(), ip_address: "localhost:9000".to_string()});
-    //slaves.push(MicroSlave {mac_address: "Asher".to_string(), ip_address: "localhost:9000".to_string()});
-    //slaves.push(MicroSlave {mac_address: "Lila".to_string(), ip_address: "localhost:9000".to_string()});
+    let slaves: Vec<MicroSlave> = Vec::new();
 
     let slaves = Arc::new(Mutex::new(slaves));
 
-    let app = Router::new().route("/", get(handler));
+    let shared_state = Arc::new(AppState { slaves: slaves.clone() });
+
+    let app = Router::new().route("/", get(handler)).with_state(shared_state);
 
     let slave_registry = slaves.clone();
 
@@ -98,7 +117,7 @@ async fn main() {
     tokio::spawn(async move {
 
         println!("Opening Registration");
-        let registration_channel = tokio::net::TcpListener::bind("0.0.0.0:8092").await.unwrap();
+        let registration_channel = tokio::net::TcpListener::bind(format!("0.0.0.0:{}",config::BROADCAST_PORT)).await.unwrap();
 
         loop {
             println!("Checking Registration Requests");
@@ -107,7 +126,6 @@ async fn main() {
                 Ok((socket, _)) => register_slave(&slave_registry, socket).await,
                 Err(error) => println!("Connection failed: {}", error),
             };
-            std::thread::sleep(Duration::from_millis(1000));
         }
     });
 
@@ -121,16 +139,15 @@ async fn main() {
                 slave_snapshot = slave_receivers.lock().unwrap().clone();
             }
 
-            println!("broadcasting to {} slave", slave_snapshot.len());
+            println!("broadcasting to {} slave(s)", slave_snapshot.len());
             for slave in slave_snapshot
             {
                 match timeout(Duration::from_millis(5000), tokio::net::TcpStream::connect(slave.ip_address)).await {
                     Ok(stream_s) => {
                         match stream_s {
                             Ok(mut stream) => {
-                                println!("broadcasting to slave");
                                 match stream.write_all(b"start timer").await {
-                                    Ok(()) => println!("wrote to slave"),
+                                    Ok(()) => (),
                                     Err(e) => {
                                         println!("removeing slave after write failure. {}", e);
                                     },

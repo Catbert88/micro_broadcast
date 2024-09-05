@@ -1,13 +1,9 @@
-use core::str;
 use std::{
-    sync::{Arc, Mutex},
-    thread::sleep,
     time::Duration,
 };
 
 use std::net::TcpStream;
 use std::net::TcpListener;
-use std::net::Ipv4Addr;
 use std::io::Write;
 use std::io::Read;
 //use esp_idf_svc::io::ErrorKind;
@@ -24,15 +20,12 @@ use embedded_graphics::{
     prelude::*,
     text::{Baseline, Text},
 };
-use embedded_svc::{http::Method, io::Write as svc_write};
 use esp_idf_svc::{
     eventloop::EspSystemEventLoop,
     hal::{
         i2c::{I2cConfig, I2cDriver},
-        io::EspIOError,
         prelude::*,
     },
-    http::server::{Configuration, EspHttpServer},
 };
 use ssd1306::{prelude::*, I2CDisplayInterface, Ssd1306};
 use wifi::wifi;
@@ -69,24 +62,25 @@ fn main() -> Result<()> {
 
 
     // Connect to the Wi-Fi network
-    let _wifi = wifi(
+    let wifi = wifi(
         config::WIFI_SSID,
         config::WIFI_PSK,
         peripherals.modem,
         sysloop,
     )?;
 
+
     Text::with_baseline("Connected!", Point::new(0, 16), text_style, Baseline::Top)
         .draw(&mut *display)
         .unwrap();
     display.flush().unwrap();
 
+    let server_addr = SocketAddrV4::new(config::SERVER_IP, config::BROADCAST_PORT);
 
-    //let display_access = Arc::new(Mutex::new(display));
+    let mac_chunks = wifi.get_mac(esp_idf_svc::wifi::WifiDeviceId::Sta).unwrap();
+    let registration_request = format!("REGISTER {:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}", mac_chunks[0], mac_chunks[1], mac_chunks[2], mac_chunks[3], mac_chunks[4], mac_chunks[5]).into_bytes();
 
-    // Replace with your server's IP and port
-    // let server_addr = SocketAddrV4::new(Ipv4Addr::new(192, 168, 4, 209), 8092);
-    let server_addr = SocketAddrV4::new(Ipv4Addr::new(192, 168, 4, 222), 8092);
+    let mut current_cmd = "".to_string();
 
     loop {
         println!("Searching for MicroBroadcaster at {:?}", server_addr);
@@ -95,8 +89,8 @@ fn main() -> Result<()> {
         {
             Ok(mut stream) => {
                 println!("Sending Registration request.");
-                match stream.write_all(b"REGISTER") {
-                    Ok(n) => println!("Registration Successfull"),
+                match stream.write_all(&registration_request) {
+                    Ok(_n) => println!("Registration Successfull"),
                     Err(e) => println!("Registration failed {}", e)
                 };
             },
@@ -108,7 +102,7 @@ fn main() -> Result<()> {
         }
 
         // now read until an error occurs then break out of the loop
-        let listener = TcpListener::bind("0.0.0.0:8092").unwrap();
+        let listener = TcpListener::bind(format!("0.0.0.0:{}",config::BROADCAST_PORT)).unwrap();
         listener.set_nonblocking(true)?;
 
         let timeout = Duration::from_secs(5);
@@ -116,22 +110,29 @@ fn main() -> Result<()> {
 
         loop {
             match listener.accept() {
-                Ok((mut socket, addr)) => {
+                Ok((mut socket, _addr)) => {
                     start_time = Instant::now();
                     socket.set_read_timeout(Some(Duration::new(1, 0)))?;
                     let mut cmd = "".to_string();
                     match socket.read_to_string(&mut cmd) {
-                        Ok(n) => (),
+                        Ok(_n) => (),
                         Err(e) => {
                             println!("Read Error: {}", e);
                             break;
                         }
                     }
+
                     println!("Received Directive: {}", &cmd);
-                    Text::with_baseline(&cmd, Point::new(0, 32), text_style, Baseline::Top)
-                        .draw(&mut *display)
-                        .unwrap();
-                    display.flush().unwrap();
+                    if cmd != current_cmd
+                    {
+                        display.clear_buffer();
+                        display.flush().unwrap();
+                        Text::with_baseline(&cmd, Point::new(0, 0), text_style, Baseline::Top)
+                            .draw(&mut *display)
+                            .unwrap();
+                        display.flush().unwrap();
+                        current_cmd = cmd.to_string();
+                    }
                 }
                 Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
                     // No incoming connection, check if we should timeout
@@ -142,7 +143,10 @@ fn main() -> Result<()> {
                     // Optional: sleep for a short duration to avoid busy-waiting
                     std::thread::sleep(Duration::from_millis(100));
                 }
-                Err(e) => break
+                Err(e) => {
+                    println!("Error: {}", e);
+                    break;
+                }
             }
 
         }
