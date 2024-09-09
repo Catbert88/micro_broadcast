@@ -7,6 +7,12 @@ use std::sync::{Arc, Mutex};
 use core::net::SocketAddr;
 
 use axum::response::Html;
+use axum::extract;
+use axum::Json;
+use axum::routing::post;
+
+use serde::Deserialize;
+use serde::Serialize;
 
 use sailfish::TemplateOnce;
 
@@ -29,6 +35,17 @@ struct MicroSlave {
 
 struct AppState {
     slaves: Arc<Mutex<Vec<MicroSlave>>>
+}
+
+#[derive(Deserialize)]
+struct MessageRequest {
+    id: String,
+    message: String,
+}
+
+#[derive(Serialize)]
+struct MessageReceipt {
+    status: String,
 }
 
 #[derive(TemplateOnce)] // automatically implement `TemplateOnce` trait
@@ -88,7 +105,7 @@ async fn register_slave(registry: &Arc<Mutex<Vec<MicroSlave>>>, mut socket: toki
 }
 
 
-async fn handler(State(state): State<Arc<AppState>>) -> Html<String> {
+async fn portal_handler(State(state): State<Arc<AppState>>) -> Html<String> {
 
     let portal = PortalTemplate {
         slaves: &state.slaves.lock().unwrap(),
@@ -96,6 +113,11 @@ async fn handler(State(state): State<Arc<AppState>>) -> Html<String> {
 
     let html_content = portal.render_once().unwrap();
     Html(html_content)
+}
+
+async fn message_handler(extract::Json(request): extract::Json<MessageRequest>) -> Json<MessageReceipt> {
+    println!("message: {}", request.message);
+    Json(MessageReceipt {status: "Complete".to_string() })
 }
 
 #[tokio::main]
@@ -109,7 +131,8 @@ async fn main() {
 
     let shared_state = Arc::new(AppState { slaves: slaves.clone() });
 
-    let app = Router::new().route("/", get(handler)).with_state(shared_state);
+    let app = Router::new().route("/messaging",post(message_handler))
+        .route("/", get(portal_handler)).with_state(shared_state);
 
     let slave_registry = slaves.clone();
 
@@ -130,8 +153,12 @@ async fn main() {
     });
 
     let slave_receivers = slaves.clone();
+
+
     // Broadcasting thread
     tokio::spawn(async move {
+
+        let current_directive = b"ANIMATE Guardian";
 
         loop {
             let slave_snapshot: Vec<MicroSlave>;
@@ -146,7 +173,7 @@ async fn main() {
                     Ok(stream_s) => {
                         match stream_s {
                             Ok(mut stream) => {
-                                match stream.write_all(b"start timer").await {
+                                match stream.write_all(current_directive).await {
                                     Ok(()) => (),
                                     Err(e) => {
                                         println!("removeing slave after write failure. {}", e);

@@ -143,8 +143,8 @@
         <tbody>
             <tr class="broadcast-row">
                 <td class="id-column">Broadcast</td>
-                <td class="message-column"><input type="text" readonly value="" onclick="openModal(this)" /></td>
-                <td class="action-column"><button>Send</button></td>
+                <td class="message-column"><input type="text" id="BroadcastMessage" readonly value="" onclick="openModal(this)" /></td>
+                <td class="action-column"><button onclick="sendMessage('Broadcast')">Send</button></td>
             </tr>
             <tr class="divider-row">
                 <td colspan="3"></td>
@@ -152,8 +152,8 @@
             <% for slave in slaves { %> 
             <tr>
               <td class="id-column"><%=slave.mac_address%></td>
-                <td class="message-column"><input type="text" readonly value="" onclick="openModal(this)" /></td>
-                <td class="action-column"><button>Send</button></td>
+              <td class="message-column"><input type="text" id="<%=slave.mac_address%>Message" readonly value="" onclick="openModal(this)" /></td>
+              <td class="action-column"><button onclick="sendMessage('<%=slave.mac_address%>')">Send</button></td>
             </tr>
             <% } %>
         </tbody>
@@ -231,6 +231,32 @@
             currentInput.value = messageInput.value;
             modal.style.display = "none";
         }
+
+        function sendMessage(id) {
+          const inputElement = document.getElementById(id + 'Message');
+          const message = inputElement.value;
+
+          fetch('/messaging', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              id: id,
+              message: message
+            }),
+          })
+            .then(response => response.json())
+            .then(data => {
+              console.log('Success:', data);
+              alert('Message sent successfully!');
+            })
+            .catch((error) => {
+              console.error('Error:', error);
+              alert('Failed to send message. Please try again.');
+            });
+        }
+
     </script>
 </body>
 </html>
