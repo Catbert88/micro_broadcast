@@ -156,25 +156,35 @@ fn main() -> Result<()> {
     // animation thread
     std::thread::spawn(move || {
 
-        let data = include_bytes!("../media/avatar-idle.bmp");
+        //let data = include_bytes!("../media/guardian.bmp");
+        let data = include_bytes!("../media/eyes.bmp");
         // Parse the BMP file.
         let bmp = Box::new(Bmp::<BinaryColor>::from_slice(data)).unwrap();
 
+        let width = 128;
+        let height = 64;
+
+        let mut sprites = Vec::new();
+        for row in 0..4 {
+            for col in 0..10 {
+                let sprite = bmp.sub_image(&Rectangle::new(Point::new(col*width, row*height), Size::new(width.try_into().unwrap(), height.try_into().unwrap() )));
+                sprites.push(sprite);
+            }
+        }
+
+        let frames: Vec<_> = sprites.iter().map(|s| Image::new(s, Point::new(0, 0)) ).collect();
+
         loop {
-            for row in 0..4 {
-                for col in 0..7 {
-                    if animation_check.load(Ordering::Relaxed) {
-                        let sprite = bmp.sub_image(&Rectangle::new(Point::new(col*50, row*50), Size::new(50, 50)));
-                        let image = Image::new(&sprite, Point::new(39, 7));
-                        {
-                            let mut display = animation_display.lock().unwrap();
-                            display.clear(BinaryColor::Off).unwrap();
-                            image.draw(&mut **display).unwrap();
-                            display.flush().unwrap();
-                        }
-                    }
-                    std::thread::sleep(Duration::from_millis(10));
+            for frame in &frames {
+                if animation_check.load(Ordering::Relaxed) {
+                    println!("animating");
+                    //let image = Image::new(frame, Point::new(0, 0));
+                    let mut display = animation_display.lock().unwrap();
+                    //display.clear(BinaryColor::Off).unwrap();
+                    frame.draw(&mut **display).unwrap();
+                    display.flush().unwrap();
                 }
+                std::thread::sleep(Duration::from_millis(10));
             }
         }
     });
