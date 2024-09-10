@@ -11,6 +11,8 @@ use std::time::Instant;
 
 use tinybmp::Bmp;
 
+use embedded_graphics::image::GetPixel;
+
 use esp_idf_svc::ipv4::SocketAddrV4;
 
 use anyhow::Result;
@@ -98,7 +100,7 @@ fn main() -> Result<()> {
     let sda = peripherals.pins.gpio6;
     let scl = peripherals.pins.gpio7;
 
-    let config = I2cConfig::new().baudrate(400.kHz().into());
+    let config = I2cConfig::new().baudrate(800.kHz().into());
     let i2c = I2cDriver::new(peripherals.i2c0, sda, scl, &config)?;
 
     let interface = I2CDisplayInterface::new(i2c);
@@ -159,32 +161,38 @@ fn main() -> Result<()> {
         //let data = include_bytes!("../media/guardian.bmp");
         let data = include_bytes!("../media/eyes.bmp");
         // Parse the BMP file.
-        let bmp = Box::new(Bmp::<BinaryColor>::from_slice(data)).unwrap();
+        let bmp = Bmp::<BinaryColor>::from_slice(data).unwrap();
 
         let width = 128;
         let height = 64;
 
-        let mut sprites = Vec::new();
-        for row in 0..4 {
-            for col in 0..10 {
-                let sprite = bmp.sub_image(&Rectangle::new(Point::new(col*width, row*height), Size::new(width.try_into().unwrap(), height.try_into().unwrap() )));
-                sprites.push(sprite);
-            }
-        }
-
-        let frames: Vec<_> = sprites.iter().map(|s| Image::new(s, Point::new(0, 0)) ).collect();
-
         loop {
-            for frame in &frames {
-                if animation_check.load(Ordering::Relaxed) {
-                    println!("animating");
-                    //let image = Image::new(frame, Point::new(0, 0));
-                    let mut display = animation_display.lock().unwrap();
-                    //display.clear(BinaryColor::Off).unwrap();
-                    frame.draw(&mut **display).unwrap();
-                    display.flush().unwrap();
+            for row in 0..4 {
+                for col in 0..10 {
+
+                    if animation_check.load(Ordering::Relaxed) {
+
+                        let frame_origin = Point::new(col*width, row*height);
+
+                        let bounding_box = Rectangle::new(frame_origin, Size::new(width.try_into().unwrap(), height.try_into().unwrap() ));
+
+                        let mut display = animation_display.lock().unwrap();
+
+                        display.clear(BinaryColor::Off).unwrap();
+
+                        for point in bounding_box.points() {
+                            let pixel = bmp.pixel(point).unwrap();
+
+                            if pixel == BinaryColor::On {
+                                let draw_point = point - frame_origin;
+                                display.set_pixel(draw_point.x.try_into().unwrap(), draw_point.y.try_into().unwrap(), true);
+                            }
+                        }
+
+                        display.flush().unwrap();
+                    }
+                    //std::thread::sleep(Duration::from_millis(10));
                 }
-                std::thread::sleep(Duration::from_millis(10));
             }
         }
     });
