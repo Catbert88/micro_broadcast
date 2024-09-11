@@ -23,18 +23,15 @@ use tokio::time::timeout;
 
 use axum::extract::State;
 
-// One thread is broadcasting to all active slaves. If there is an issue communicating to a slave,
-// that slave is dropped.
-// Another thread is broadcasting to all known slave devices
-
 #[derive(Clone)]
-struct MicroSlave {
+struct MicroWorker {
     mac_address: String,
     ip_address: SocketAddr,
+    current_cmd: Option<String>,
 }
 
 struct AppState {
-    slaves: Arc<Mutex<Vec<MicroSlave>>>
+    workers: Arc<Mutex<Vec<MicroWorker>>>
 }
 
 #[derive(Deserialize)]
@@ -43,21 +40,33 @@ struct MessageRequest {
     message: String,
 }
 
+#[derive(Deserialize)]
+struct TimerRequest {
+    id: String,
+    duration: String,
+}
+
+#[derive(Deserialize)]
+struct AnimationRequest {
+    id: String,
+    animation: String,
+}
+
 #[derive(Serialize)]
-struct MessageReceipt {
+struct RequestReceipt {
     status: String,
 }
 
 #[derive(TemplateOnce)] // automatically implement `TemplateOnce` trait
 #[template(path = "portal.stpl")] // specify the path to template
 struct PortalTemplate<'a> {
-    slaves: &'a Vec<MicroSlave>,
+    workers: &'a Vec<MicroWorker>,
 }
 
-async fn register_slave(registry: &Arc<Mutex<Vec<MicroSlave>>>, mut socket: tokio::net::TcpStream) {
+async fn register_worker(registry: &Arc<Mutex<Vec<MicroWorker>>>, mut socket: tokio::net::TcpStream) {
     println!("New connection from {:?}", socket.peer_addr().unwrap());
 
-    // need to update "connected" slaves?
+    // need to update "connected" workers?
 
     let mut buffer = [0u8; 1024];
     loop {
@@ -78,10 +87,10 @@ async fn register_slave(registry: &Arc<Mutex<Vec<MicroSlave>>>, mut socket: toki
                                 let address = socket.peer_addr().unwrap();
                                 let rx_address = SocketAddr::new(address.ip(), config::BROADCAST_PORT);
 
-                                println!("Registering MicroSlave {} ip_address: {}", mac_address, address);
+                                println!("Registering MicroWorker {} ip_address: {}", mac_address, address);
                                 let mut active_registry = registry.lock().unwrap();
                                 active_registry.retain(|s| s.ip_address != rx_address);
-                                active_registry.push(MicroSlave {mac_address: mac_address.to_string(), ip_address: rx_address });
+                                active_registry.push(MicroWorker {mac_address: mac_address.to_string(), ip_address: rx_address, current_cmd: None });
 
                             },
                             None => {
@@ -108,16 +117,64 @@ async fn register_slave(registry: &Arc<Mutex<Vec<MicroSlave>>>, mut socket: toki
 async fn portal_handler(State(state): State<Arc<AppState>>) -> Html<String> {
 
     let portal = PortalTemplate {
-        slaves: &state.slaves.lock().unwrap(),
+        workers: &state.workers.lock().unwrap(),
     };
 
     let html_content = portal.render_once().unwrap();
     Html(html_content)
 }
 
-async fn message_handler(extract::Json(request): extract::Json<MessageRequest>) -> Json<MessageReceipt> {
-    println!("message: {}", request.message);
-    Json(MessageReceipt {status: "Complete".to_string() })
+async fn message_handler(State(state): State<Arc<AppState>>, extract::Json(request): extract::Json<MessageRequest>) -> Json<RequestReceipt> {
+
+    println!("id: {}, message: {}", request.id, request.message);
+
+    let mut workers = state.workers.lock().unwrap();
+
+    for worker in workers.iter_mut() {
+        worker.current_cmd = Some("MESSAGE ".to_string() + &request.message);
+    }
+
+    Json(RequestReceipt {status: "Complete".to_string() })
+}
+
+async fn timer_start_handler(State(state): State<Arc<AppState>>, extract::Json(request): extract::Json<TimerRequest>) -> Json<RequestReceipt> {
+
+    println!("id: {}, duration: {}", request.id, request.duration);
+
+    let mut workers = state.workers.lock().unwrap();
+
+    for worker in workers.iter_mut() {
+        worker.current_cmd = Some("TIMER ".to_string() + &request.duration);
+    }
+
+
+    Json(RequestReceipt {status: "Complete".to_string() })
+}
+
+async fn timer_add_handler(State(state): State<Arc<AppState>>, extract::Json(request): extract::Json<TimerRequest>) -> Json<RequestReceipt> {
+
+    println!("id: {}, duration: {}", request.id, request.duration);
+
+    let mut workers = state.workers.lock().unwrap();
+
+    for worker in workers.iter_mut() {
+        worker.current_cmd = Some("TIMER ".to_string() + &request.duration);
+    }
+
+    Json(RequestReceipt {status: "Complete".to_string() })
+}
+
+async fn animation_handler(State(state): State<Arc<AppState>>, extract::Json(request): extract::Json<AnimationRequest>) -> Json<RequestReceipt> {
+
+    println!("id: {}, animation: {}", request.id, request.animation);
+
+    let mut workers = state.workers.lock().unwrap();
+
+    for worker in workers.iter_mut() {
+        worker.current_cmd = Some("ANIMATE ".to_string() + &request.animation);
+    }
+
+    Json(RequestReceipt {status: "Complete".to_string() })
 }
 
 #[tokio::main]
@@ -125,16 +182,19 @@ async fn main() {
 
     // build our application with a single route
 
-    let slaves: Vec<MicroSlave> = Vec::new();
+    let workers: Vec<MicroWorker> = Vec::new();
 
-    let slaves = Arc::new(Mutex::new(slaves));
+    let workers = Arc::new(Mutex::new(workers));
 
-    let shared_state = Arc::new(AppState { slaves: slaves.clone() });
+    let shared_state = Arc::new(AppState { workers: workers.clone() });
 
-    let app = Router::new().route("/messaging",post(message_handler))
+    let app = Router::new().route("/messaging", post(message_handler))
+        .route("/timerStart", post(timer_start_handler))
+        .route("/timerAdd", post(timer_add_handler))
+        .route("/animation", post(animation_handler))
         .route("/", get(portal_handler)).with_state(shared_state);
 
-    let slave_registry = slaves.clone();
+    let worker_registry = workers.clone();
 
     // Register thread
     tokio::spawn(async move {
@@ -146,48 +206,50 @@ async fn main() {
             println!("Checking Registration Requests");
 
             match registration_channel.accept().await {
-                Ok((socket, _)) => register_slave(&slave_registry, socket).await,
+                Ok((socket, _)) => register_worker(&worker_registry, socket).await,
                 Err(error) => println!("Connection failed: {}", error),
             };
         }
     });
 
-    let slave_receivers = slaves.clone();
+    let worker_receivers = workers.clone();
 
 
     // Broadcasting thread
     tokio::spawn(async move {
 
-        let current_directive = b"ANIMATE Guardian";
-
         loop {
-            let slave_snapshot: Vec<MicroSlave>;
+            let worker_snapshot: Vec<MicroWorker>;
             {
-                slave_snapshot = slave_receivers.lock().unwrap().clone();
+                worker_snapshot = worker_receivers.lock().unwrap().clone();
             }
 
-            println!("broadcasting to {} slave(s)", slave_snapshot.len());
-            for slave in slave_snapshot
+            println!("broadcasting to {} receiver(s)", worker_snapshot.len());
+            for worker in worker_snapshot
             {
-                match timeout(Duration::from_millis(5000), tokio::net::TcpStream::connect(slave.ip_address)).await {
-                    Ok(stream_s) => {
-                        match stream_s {
-                            Ok(mut stream) => {
-                                match stream.write_all(current_directive).await {
-                                    Ok(()) => (),
-                                    Err(e) => {
-                                        println!("removeing slave after write failure. {}", e);
-                                    },
-                                };
-                            },
-                            Err(e) => {
-                                println!("removeing slave after write failure. {}", e);
+                if let Some(cmd) = worker.current_cmd.or(Some("PING".to_string())) {
+                    match timeout(Duration::from_millis(5000), tokio::net::TcpStream::connect(worker.ip_address)).await {
+                        Ok(stream_s) => {
+                            match stream_s {
+                                Ok(mut stream) => {
+                                    println!("broadcasting to cmd '{}' to {}", &cmd, worker.mac_address);
+                                    match stream.write_all(&cmd.into_bytes()).await {
+                                        Ok(()) => (),
+                                        Err(e) => {
+                                            println!("removeing worker after write failure. {}", e);
+                                        },
+                                    };
+                                },
+
+                                Err(e) => {
+                                    println!("removeing worker after write failure. {}", e);
+                                }
                             }
+                        },
+                        Err(e) => {
+                            println!("removeing worker after connect failures. {}", e);
+                            worker_receivers.lock().unwrap().retain(|s| s.ip_address != worker.ip_address);
                         }
-                    },
-                    Err(e) => {
-                        println!("removeing slave after connect failures. {}", e);
-                        slave_receivers.lock().unwrap().retain(|s| s.ip_address != slave.ip_address);
                     }
                 }
             }

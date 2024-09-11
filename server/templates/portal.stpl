@@ -34,6 +34,7 @@
             font-weight: bold;
         }
         .divider-row td {
+            display: flex;
             border: none;
             height: 10px;
             background-color: #f2f2f2;
@@ -126,6 +127,19 @@
           width: 80px;
           text-align: center;
         }
+        .animation-column {
+            display: flex;
+            width: 150px;
+        }
+        .animation-cell {
+            margin-right: 5px;
+            width: 150px;
+            display: flex;
+            align-items: center;
+        }
+        .animation-cell select {
+            margin-right: 5px;
+        }
     </style>
 </head>
 <body>
@@ -149,11 +163,11 @@
             <tr class="divider-row">
                 <td colspan="3"></td>
             </tr>
-            <% for slave in slaves { %> 
+            <% for worker in workers { %> 
             <tr>
-              <td class="id-column"><%=slave.mac_address%></td>
-              <td class="message-column"><input type="text" id="<%=slave.mac_address%>Message" readonly value="" onclick="openModal(this)" /></td>
-              <td class="action-column"><button onclick="sendMessage('<%=slave.mac_address%>')">Send</button></td>
+              <td class="id-column"><%=worker.mac_address%></td>
+              <td class="message-column"><input type="text" id="<%=worker.mac_address%>Message" readonly value="" onclick="openModal(this)" /></td>
+              <td class="action-column"><button onclick="sendMessage('<%=worker.mac_address%>')">Send</button></td>
             </tr>
             <% } %>
         </tbody>
@@ -174,24 +188,60 @@
             <tr class="broadcast-row">
                 <td class="id-column">Broadcast</td>
                 <td class="duration-cell">
-                    <input type="text" value="60" />
-                    <button>Start</button>
+                    <input type="text" id="BroadcastTimerDuration" value="60" />
+                    <button onclick="startTimer('Broadcast')">Start</button>
                 </td>
-                <td class="add-time-column"><button class="add-time-btn">+5</button></td>
+                <td class="add-time-column"><button class="add-time-btn" onclick="AddTimer('Broadcast')">+5</button></td>
                 <td></td>
             </tr>
             <tr class="divider-row">
                 <td colspan="4"></td>
             </tr>
-            <% for slave in slaves { %> 
+            <% for worker in workers { %> 
             <tr>
-              <td class="id-column"><%=slave.mac_address%></td>
+              <td class="id-column"><%=worker.mac_address%></td>
                 <td class="duration-cell">
-                    <input type="text" value="60" />
-                    <button>Start</button>
+                    <input type="text" id="<%=worker.mac_address%>TimerDuration" value="60" />
+                    <button onclick="startTimer('<%=worker.mac_address%>')">Start</button>
                 </td>
-                <td class="add-time-column"><button class="add-time-btn">+5</button></td>
+                <td class="add-time-column"><button class="add-time-btn" onclick="AddTimer('<%=worker.mac_address%>')">+5</button></td>
                 <td>00:00</td>
+            </tr>
+            <% } %>
+        </tbody>
+    </table>
+    
+    <h2>Animations</h2>
+    
+    <table>
+        <thead>
+            <tr>
+                <th class="id-column">ID</th>
+                <th class="animation-column">Animation</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr class="broadcast-row">
+                <td class="id-column">Broadcast</td>
+                <td class="animation-cell">
+                    <select id="BroadcastAnimation">
+                        <option>Cartoon Eyes</option>
+                    </select>
+                    <button onclick="startAnimation('Broadcast')">Start</button>
+                </td>
+            </tr>
+            <tr class="divider-row">
+                <td colspan="2"></td>
+            </tr>
+            <% for worker in workers { %> 
+            <tr>
+              <td class="id-column"><%=worker.mac_address%></td>
+                <td class="animation-cell">
+                  <select id="<%=worker.mac_address%>Animation">
+                        <option>Cartoon Eyes</option>
+                    </select>
+                    <button onclick="startAnimation('<%=worker.mac_address%>')">Start</button>
+                </td>
             </tr>
             <% } %>
         </tbody>
@@ -201,18 +251,18 @@
         <div class="modal-content">
             <span class="close">&times;</span>
             <textarea id="messageInput"></textarea>
-            <button onclick="saveMessage()">Save</button>
+            <button onclick="saveMessage()">Update</button>
         </div>
     </div>
 
     <script>
-        let currentInput;
+        let currentMessagingInput;
         const modal = document.getElementById("messageModal");
         const messageInput = document.getElementById("messageInput");
         const span = document.getElementsByClassName("close")[0];
 
         function openModal(input) {
-            currentInput = input;
+            currentMessagingInput = input;
             messageInput.value = input.value;
             modal.style.display = "block";
         }
@@ -228,7 +278,7 @@
         }
 
         function saveMessage() {
-            currentInput.value = messageInput.value;
+            currentMessagingInput.value = messageInput.value;
             modal.style.display = "none";
         }
 
@@ -254,6 +304,79 @@
             .catch((error) => {
               console.error('Error:', error);
               alert('Failed to send message. Please try again.');
+            });
+        }
+        
+        function startAnimation(id) {
+            const inputElement = document.getElementById(id + 'Animation');
+            const animation = inputElement.value;
+            
+            fetch('/animation', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    id: id,
+                    animation: animation
+                }),
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log('Success:', data);
+                alert('Animation started successfully!');
+            })
+            .catch((error) => {
+                console.error('Error:', error);
+                alert('Failed to start animation. Please try again.');
+            });
+        }
+        
+        function startTimer(id) {
+            const inputElement = document.getElementById(id + 'TimerDuration');
+            const duration = inputElement.value;
+            
+            fetch('/timerStart', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    id: id,
+                    duration: duration
+                }),
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log('Success:', data);
+                alert('Timer started successfully!');
+            })
+            .catch((error) => {
+                console.error('Error:', error);
+                alert('Failed to start timer. Please try again.');
+            });
+        }
+        
+        function addTimer(id) {
+            
+            fetch('/timerAdd', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    id: id,
+                    duration: 5
+                }),
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log('Success:', data);
+                alert('Time added successfully!');
+            })
+            .catch((error) => {
+                console.error('Error:', error);
+                alert('Failed to add to timer. Please try again.');
             });
         }
 

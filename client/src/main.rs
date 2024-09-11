@@ -46,48 +46,32 @@ use wifi::wifi;
 
 use esp_idf_svc::hal::task::thread::ThreadSpawnConfiguration;
 
-fn update_animation<DI, SIZE, MODE>(display: &Arc<Mutex<Box<Ssd1306<DI, SIZE, MODE>>>>, animation: Option<&str>, animation_switch: &Arc<AtomicBool>) {
-    match animation {
-        Some(s) => {
-            animation_switch.store(true, Ordering::Relaxed);
-        }
-        None => (),
+fn update_animation<DI, SIZE, MODE>(display: &Arc<Mutex<Box<Ssd1306<DI, SIZE, MODE>>>>, animation: &str, animation_switch: &Arc<AtomicBool>) {
+    animation_switch.store(true, Ordering::Relaxed);
+}
+
+fn update_message<DI: WriteOnlyDataCommand, SIZE: ssd1306::prelude::DisplaySize, MODE>(display: &Arc<Mutex<Box<Ssd1306<DI, SIZE, BufferedGraphicsMode<SIZE>>>>>, message: &str, animation_switch: &Arc<AtomicBool>) {
+
+    animation_switch.store(false, Ordering::Relaxed);
+
+    let text_style = MonoTextStyleBuilder::new()
+        .font(&FONT_6X10)
+        .text_color(BinaryColor::On)
+        .build();
+
+    {
+        let mut active_display = display.lock().unwrap();
+        active_display.clear(BinaryColor::Off).unwrap();
+        Text::with_baseline(message, Point::new(0, 0), text_style, Baseline::Top)
+            .draw(&mut **active_display)
+            .unwrap();
+        active_display.flush().unwrap();
     }
 
 }
 
-fn update_message<DI, SIZE: ssd1306::prelude::DisplaySize, MODE>(display: Arc<Mutex<Box<Ssd1306<DI, SIZE, BufferedGraphicsMode<SIZE>>>>>, message: Option<&str>, animation_switch: &Arc<AtomicBool>) where DI: WriteOnlyDataCommand {
-    match message {
-        Some(s) => {
-            animation_switch.store(false, Ordering::Relaxed);
-
-            let text_style = MonoTextStyleBuilder::new()
-                .font(&FONT_6X10)
-                .text_color(BinaryColor::On)
-                .build();
-
-            {
-                let mut active_display = display.lock().unwrap();
-                active_display.clear(BinaryColor::Off).unwrap();
-                Text::with_baseline(&s, Point::new(0, 0), text_style, Baseline::Top)
-                    .draw(&mut **active_display)
-                    .unwrap();
-                active_display.flush().unwrap();
-            }
-        }
-        None => (),
-    }
-
-}
-
-fn update_timer<DI, SIZE, MODE>(display: &Arc<Mutex<Box<Ssd1306<DI, SIZE, MODE>>>>, message: Option<&str>, animation_switch: &Arc<AtomicBool>) {
-    match message {
-        Some(s) => {
-            println!("{}",s);
-        }
-        None => (),
-    }
-
+fn update_timer<DI, SIZE, MODE>(display: &Arc<Mutex<Box<Ssd1306<DI, SIZE, MODE>>>>, timer: &str, animation_switch: &Arc<AtomicBool>) {
+    println!("starting timer: {}", timer);
 }
 
 fn main() -> Result<()> {
@@ -191,7 +175,7 @@ fn main() -> Result<()> {
 
                         display.flush().unwrap();
                     }
-                    //std::thread::sleep(Duration::from_millis(10));
+                    std::thread::sleep(Duration::from_millis(10));
                 }
             }
         }
@@ -242,14 +226,16 @@ fn main() -> Result<()> {
                     println!("Received Directive: {}", &cmd);
                     if cmd != current_cmd
                     {
-                        let mut parts = cmd.split_ascii_whitespace();
-                        match parts.next() {
-                            Some("ANIMATE") => update_animation(&display, parts.next(), &animation_switch),
-                            Some("MESSAGE") => update_message::<I2CInterface<I2cDriver<'_>>, ssd1306::prelude::DisplaySize128x64, BufferedGraphicsMode<ssd1306::prelude::DisplaySize128x64>>(display.clone(), parts.next(), &animation_switch),
-                            Some("TIMER")   => update_timer(&display, parts.next(), &animation_switch),
-                            Some(_) => panic!("Unrecognized command"),
-                            None => panic!("Command Parsing Error"),
-                        };
+                        if cmd == "PING" {
+                        } else {
+                            match cmd.split_once(' ') {
+                                Some(("ANIMATE", a)) => update_animation(&display, a, &animation_switch),
+                                Some(("MESSAGE", m)) => update_message::<I2CInterface<I2cDriver<'_>>, ssd1306::prelude::DisplaySize128x64, BufferedGraphicsMode<ssd1306::prelude::DisplaySize128x64>>(&display, m, &animation_switch),
+                                Some(("TIMER", t))   => update_timer(&display, t, &animation_switch),
+                                Some((_,_)) => panic!("Unrecognized command"),
+                                None => panic!("Unrecognized command"),
+                            };
+                        }
                         current_cmd = cmd.to_string();
                     }
 
