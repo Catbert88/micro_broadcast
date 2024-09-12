@@ -25,6 +25,8 @@ use tokio::time::timeout;
 
 use axum::extract::State;
 
+use std::ops::AddAssign;
+
 
 static PERSISTENT_WORKERS: phf::Map<&'static str, &'static str> = phf_map! {
     "EC:DA:3B:BF:46:9C" => "Georgia",
@@ -194,7 +196,7 @@ async fn register_worker(registry: Arc<Mutex<MicroManager>>, mut socket: tokio::
                 };
                 break;
             }
-            Ok(n) => length = length+n,
+            Ok(n) => length.add_assign(n),
             Err(e) => {
                 // An error occurred while reading
                 println!("Failed to read from socket: {}", e);
