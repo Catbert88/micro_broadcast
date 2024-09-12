@@ -165,7 +165,7 @@
             </tr>
             <% for worker in workers { %> 
             <tr>
-              <td class="id-column"><%=worker.mac_address%></td>
+              <td class="id-column"><%=worker.name()%></td>
               <td class="message-column"><input type="text" id="<%=worker.mac_address%>Message" readonly value="" onclick="openModal(this)" /></td>
               <td class="action-column"><button onclick="sendMessage('<%=worker.mac_address%>')">Send</button></td>
             </tr>
@@ -199,7 +199,7 @@
             </tr>
             <% for worker in workers { %> 
             <tr>
-              <td class="id-column"><%=worker.mac_address%></td>
+              <td class="id-column"><%=worker.name()%></td>
                 <td class="duration-cell">
                     <input type="text" id="<%=worker.mac_address%>TimerDuration" value="60" />
                     <button onclick="startTimer('<%=worker.mac_address%>')">Start</button>
@@ -235,7 +235,7 @@
             </tr>
             <% for worker in workers { %> 
             <tr>
-              <td class="id-column"><%=worker.mac_address%></td>
+              <td class="id-column"><%=worker.name()%></td>
                 <td class="animation-cell">
                   <select id="<%=worker.mac_address%>Animation">
                         <option>Cartoon Eyes</option>

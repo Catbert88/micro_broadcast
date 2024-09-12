@@ -3,8 +3,10 @@ use axum::{
     Router,
 };
 
+use phf::phf_map;
+
 use std::sync::{Arc, Mutex};
-use core::net::SocketAddr;
+use std::net::SocketAddr;
 
 use axum::response::Html;
 use axum::extract;
@@ -23,15 +25,56 @@ use tokio::time::timeout;
 
 use axum::extract::State;
 
+
+static PERSISTENT_WORKERS: phf::Map<&'static str, &'static str> = phf_map! {
+    "EC:DA:3B:BF:46:9C" => "Georgia",
+    "key2" => "Asher",
+    "key3" => "Lila",
+    // Add more key-value pairs as needed
+};
+
 #[derive(Clone)]
 struct MicroWorker {
     mac_address: String,
-    ip_address: SocketAddr,
+    alias: Option<String>,
+    ip_address: Option<SocketAddr>,
+    active: bool,
+    persistent: bool,
     current_cmd: Option<String>,
 }
 
+impl MicroWorker {
+
+    fn get_alias(mac_address: &str) -> Option<String> {
+        if let Some(a) = PERSISTENT_WORKERS.get(mac_address) {
+            return Some(a.to_string());
+        } else {
+            return None;
+        }
+    }
+
+    fn new(mac_address: String, ip_address: Option<SocketAddr>) -> Self {
+        Self {
+            alias: MicroWorker::get_alias(&mac_address),
+            mac_address: mac_address,
+            ip_address: ip_address,
+            active: true,
+            persistent: false,
+            current_cmd: None,
+        }
+    }
+
+    fn name(&self) -> &str {
+        if let Some(a) = &self.alias {
+            return &a;
+        } else {
+            return &self.mac_address;
+        }
+    }
+}
+
 struct AppState {
-    workers: Arc<Mutex<Vec<MicroWorker>>>
+    micro_manager: Arc<Mutex<MicroManager>>
 }
 
 #[derive(Deserialize)]
@@ -57,26 +100,78 @@ struct RequestReceipt {
     status: String,
 }
 
+struct MicroManager {
+    workers: Vec<MicroWorker>
+}
+
+impl MicroManager {
+
+    fn new() -> Self {
+       let mut workers: Vec<MicroWorker> = Vec::new();
+
+        for (mac_address, alias) in PERSISTENT_WORKERS.entries() {
+            workers.push( MicroWorker {
+                mac_address: mac_address.to_string(),
+                alias: Some(alias.to_string()),
+                ip_address: None,
+                active: false,
+                persistent: true,
+                current_cmd: None,
+            });
+        }
+
+        Self { workers: workers }
+    }
+
+    fn add_worker(&mut self, mac_address: String, ip_address: SocketAddr) {
+        if let Some(w) = self.get_worker_mut(&mac_address) {
+            println!("Setting persistent worker {} to active", w.name());
+            w.active = true;
+            w.ip_address = Some(ip_address);
+        } else {
+            self.workers.push(MicroWorker::new(mac_address, Some(ip_address)) );
+        }
+    }
+
+    fn remove_worker(&mut self, mac_address: &str) {
+        if let Some(w) = self.get_worker_mut(mac_address) {
+            if w.persistent {
+                w.active = false;
+            } else {
+                self.workers.retain(|w| w.mac_address != mac_address);
+            }
+        }
+    }
+
+    fn get_worker_mut(&mut self, mac_address: &str) -> Option<&mut MicroWorker> {
+        self.workers.iter_mut().find(|w| w.mac_address == mac_address)
+    }
+
+    fn get_worker(&mut self, mac_address: &str) -> Option<&MicroWorker> {
+        self.workers.iter().find(|w| w.mac_address == mac_address)
+    }
+
+}
+
 #[derive(TemplateOnce)] // automatically implement `TemplateOnce` trait
 #[template(path = "portal.stpl")] // specify the path to template
 struct PortalTemplate<'a> {
     workers: &'a Vec<MicroWorker>,
 }
 
-async fn register_worker(registry: &Arc<Mutex<Vec<MicroWorker>>>, mut socket: tokio::net::TcpStream) {
+async fn register_worker(registry: Arc<Mutex<MicroManager>>, mut socket: tokio::net::TcpStream) {
     println!("New connection from {:?}", socket.peer_addr().unwrap());
 
     // need to update "connected" workers?
 
     let mut buffer = [0u8; 1024];
+    let mut length = 0;
     loop {
         // Read data from the client
         match socket.read(&mut buffer).await {
             Ok(0) => {
-                // Connection was closed by the client
-                println!("Client disconnected.");
 
-                let message = std::str::from_utf8(&buffer).unwrap_or("[Invalid UTF-8]");
+                let message = std::str::from_utf8(&buffer[0..length]).unwrap_or("[Invalid UTF-8]");
                 println!("Message: {}", message);
 
                 let mut parts = message.split_ascii_whitespace();
@@ -88,10 +183,7 @@ async fn register_worker(registry: &Arc<Mutex<Vec<MicroWorker>>>, mut socket: to
                                 let rx_address = SocketAddr::new(address.ip(), config::BROADCAST_PORT);
 
                                 println!("Registering MicroWorker {} ip_address: {}", mac_address, address);
-                                let mut active_registry = registry.lock().unwrap();
-                                active_registry.retain(|s| s.ip_address != rx_address);
-                                active_registry.push(MicroWorker {mac_address: mac_address.to_string(), ip_address: rx_address, current_cmd: None });
-
+                                registry.lock().unwrap().add_worker(mac_address.to_string(), rx_address);
                             },
                             None => {
                             }
@@ -102,7 +194,7 @@ async fn register_worker(registry: &Arc<Mutex<Vec<MicroWorker>>>, mut socket: to
                 };
                 break;
             }
-            Ok(_n) => (),
+            Ok(n) => length = length+n,
             Err(e) => {
                 // An error occurred while reading
                 println!("Failed to read from socket: {}", e);
@@ -117,7 +209,7 @@ async fn register_worker(registry: &Arc<Mutex<Vec<MicroWorker>>>, mut socket: to
 async fn portal_handler(State(state): State<Arc<AppState>>) -> Html<String> {
 
     let portal = PortalTemplate {
-        workers: &state.workers.lock().unwrap(),
+        workers: &state.micro_manager.lock().unwrap().workers,
     };
 
     let html_content = portal.render_once().unwrap();
@@ -128,9 +220,7 @@ async fn message_handler(State(state): State<Arc<AppState>>, extract::Json(reque
 
     println!("id: {}, message: {}", request.id, request.message);
 
-    let mut workers = state.workers.lock().unwrap();
-
-    for worker in workers.iter_mut() {
+    for worker in state.micro_manager.lock().unwrap().workers.iter_mut() {
         worker.current_cmd = Some("MESSAGE ".to_string() + &request.message);
     }
 
@@ -141,9 +231,7 @@ async fn timer_start_handler(State(state): State<Arc<AppState>>, extract::Json(r
 
     println!("id: {}, duration: {}", request.id, request.duration);
 
-    let mut workers = state.workers.lock().unwrap();
-
-    for worker in workers.iter_mut() {
+    for worker in state.micro_manager.lock().unwrap().workers.iter_mut() {
         worker.current_cmd = Some("TIMER ".to_string() + &request.duration);
     }
 
@@ -155,9 +243,7 @@ async fn timer_add_handler(State(state): State<Arc<AppState>>, extract::Json(req
 
     println!("id: {}, duration: {}", request.id, request.duration);
 
-    let mut workers = state.workers.lock().unwrap();
-
-    for worker in workers.iter_mut() {
+    for worker in state.micro_manager.lock().unwrap().workers.iter_mut() {
         worker.current_cmd = Some("TIMER ".to_string() + &request.duration);
     }
 
@@ -168,9 +254,7 @@ async fn animation_handler(State(state): State<Arc<AppState>>, extract::Json(req
 
     println!("id: {}, animation: {}", request.id, request.animation);
 
-    let mut workers = state.workers.lock().unwrap();
-
-    for worker in workers.iter_mut() {
+    for worker in state.micro_manager.lock().unwrap().workers.iter_mut() {
         worker.current_cmd = Some("ANIMATE ".to_string() + &request.animation);
     }
 
@@ -180,13 +264,10 @@ async fn animation_handler(State(state): State<Arc<AppState>>, extract::Json(req
 #[tokio::main]
 async fn main() {
 
-    // build our application with a single route
 
-    let workers: Vec<MicroWorker> = Vec::new();
+    let micro_manager = Arc::new(Mutex::new(MicroManager::new()));
 
-    let workers = Arc::new(Mutex::new(workers));
-
-    let shared_state = Arc::new(AppState { workers: workers.clone() });
+    let shared_state = Arc::new(AppState { micro_manager: micro_manager.clone() });
 
     let app = Router::new().route("/messaging", post(message_handler))
         .route("/timerStart", post(timer_start_handler))
@@ -194,67 +275,75 @@ async fn main() {
         .route("/animation", post(animation_handler))
         .route("/", get(portal_handler)).with_state(shared_state);
 
-    let worker_registry = workers.clone();
-
     // Register thread
-    tokio::spawn(async move {
+    tokio::spawn({
 
-        println!("Opening Registration");
-        let registration_channel = tokio::net::TcpListener::bind(format!("0.0.0.0:{}",config::BROADCAST_PORT)).await.unwrap();
+        let micro_manager = micro_manager.clone();
 
-        loop {
-            println!("Checking Registration Requests");
+        async move {
 
-            match registration_channel.accept().await {
-                Ok((socket, _)) => register_worker(&worker_registry, socket).await,
-                Err(error) => println!("Connection failed: {}", error),
-            };
+            println!("Opening Registration");
+            let registration_channel = tokio::net::TcpListener::bind(format!("0.0.0.0:{}",config::BROADCAST_PORT)).await.unwrap();
+
+            loop {
+                println!("Checking Registration Requests");
+
+                match registration_channel.accept().await {
+                    Ok((socket, _)) => register_worker(micro_manager.clone(), socket).await,
+                    Err(error) => println!("Connection failed: {}", error),
+                };
+            }
         }
     });
 
-    let worker_receivers = workers.clone();
-
 
     // Broadcasting thread
-    tokio::spawn(async move {
+    tokio::spawn({
+        let micro_manager = micro_manager.clone();
 
-        loop {
-            let worker_snapshot: Vec<MicroWorker>;
-            {
-                worker_snapshot = worker_receivers.lock().unwrap().clone();
-            }
+        async move {
 
-            println!("broadcasting to {} receiver(s)", worker_snapshot.len());
-            for worker in worker_snapshot
-            {
-                if let Some(cmd) = worker.current_cmd.or(Some("PING".to_string())) {
-                    match timeout(Duration::from_millis(5000), tokio::net::TcpStream::connect(worker.ip_address)).await {
-                        Ok(stream_s) => {
-                            match stream_s {
-                                Ok(mut stream) => {
-                                    println!("broadcasting to cmd '{}' to {}", &cmd, worker.mac_address);
-                                    match stream.write_all(&cmd.into_bytes()).await {
-                                        Ok(()) => (),
-                                        Err(e) => {
-                                            println!("removeing worker after write failure. {}", e);
+            loop {
+
+                let workers: Vec<MicroWorker>;
+                {
+                    workers = micro_manager.lock().unwrap().workers.clone();
+                }
+
+                println!("Managing to {} worker(s)", workers.len());
+                for worker in workers
+                {
+                    if let Some(ip_address) = worker.ip_address {
+                        if let Some(cmd) = worker.current_cmd.or(Some("PING".to_string()) ) {
+                            match timeout(Duration::from_millis(5000), tokio::net::TcpStream::connect(ip_address)).await {
+                                Ok(stream_s) => {
+                                    match stream_s {
+                                        Ok(mut stream) => {
+                                            println!("broadcasting cmd '{}' to {}", &cmd, worker.mac_address);
+                                            match stream.write_all(&cmd.into_bytes()).await {
+                                                Ok(()) => (),
+                                                Err(e) => {
+                                                    println!("removing worker after write failure. {}", e);
+                                                },
+                                            };
                                         },
-                                    };
-                                },
 
+                                        Err(e) => {
+                                            println!("removing worker after write failure. {}", e);
+                                        }
+                                    }
+                                },
                                 Err(e) => {
-                                    println!("removeing worker after write failure. {}", e);
+                                    println!("removing worker after connect failures. {}", e);
+                                    micro_manager.lock().unwrap().remove_worker(&worker.mac_address);
                                 }
                             }
-                        },
-                        Err(e) => {
-                            println!("removeing worker after connect failures. {}", e);
-                            worker_receivers.lock().unwrap().retain(|s| s.ip_address != worker.ip_address);
                         }
                     }
                 }
-            }
 
-            tokio::time::sleep(Duration::from_millis(1000)).await;
+                tokio::time::sleep(Duration::from_millis(1000)).await;
+            }
         }
 
     });

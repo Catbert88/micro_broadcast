@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 serde    = { version = "1.0.210", features = ["derive"] }
 tokio    = { version = "1", features = ["full"] }
+phf      = { version = "0.11", features = ["macros"] }
 axum     = "0.7.5"
 sailfish = "0.8.3"
 config   = { path = "../common/lib/config" }
