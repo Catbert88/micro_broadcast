@@ -1,9 +1,13 @@
 <!DOCTYPE html>
 <html lang="en">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="apple-mobile-web-app-capable" content="yes">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Micro Broadcast</title>
+    <link rel="apple-touch-icon" href="https://cdn-icons-png.freepik.com/512/6811/6811382.png">
+    <link rel="apple-touch-startup-image" href="https://cdn-icons-png.freepik.com/512/6811/6811382.png">
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -157,7 +161,7 @@
         <tbody>
             <tr class="broadcast-row">
                 <td class="id-column">Broadcast</td>
-                <td class="message-column"><input type="text" id="BroadcastMessage" readonly value="" onclick="openModal(this)" /></td>
+                <td class="message-column"><textarea id="BroadcastMessage" name="Broadcom" rows="4" cols="21" maxlength="80" spellcheck="true" placeholder="Broadcast Message..."></textarea></td>
                 <td class="action-column"><button onclick="sendMessage('Broadcast')">Send</button></td>
             </tr>
             <tr class="divider-row">
@@ -165,8 +169,8 @@
             </tr>
             <% for worker in workers { %> 
             <tr>
-              <td class="id-column"><%=worker.name()%></td>
-              <td class="message-column"><input type="text" id="<%=worker.mac_address%>Message" readonly value="" onclick="openModal(this)" /></td>
+              <td class="id-column" style="color: <%=if worker.active {"green"} else {"red"} %>;"><%=worker.name()%></td>
+              <td class="message-column"><textarea id="<%=worker.mac_address%>Message" rows="4" cols="21" maxlength="80" spellcheck="true" placeholder="Message..."></textarea></td>
               <td class="action-column"><button onclick="sendMessage('<%=worker.mac_address%>')">Send</button></td>
             </tr>
             <% } %>
@@ -199,7 +203,7 @@
             </tr>
             <% for worker in workers { %> 
             <tr>
-              <td class="id-column"><%=worker.name()%></td>
+              <td class="id-column" style="color: <%=if worker.active {"green"} else {"red"} %>;"><%=worker.name()%></td>
                 <td class="duration-cell">
                     <input type="text" id="<%=worker.mac_address%>TimerDuration" value="60" />
                     <button onclick="startTimer('<%=worker.mac_address%>')">Start</button>
@@ -235,7 +239,7 @@
             </tr>
             <% for worker in workers { %> 
             <tr>
-              <td class="id-column"><%=worker.name()%></td>
+              <td class="id-column" style="color: <%=if worker.active {"green"} else {"red"} %>;"><%=worker.name()%></td>
                 <td class="animation-cell">
                   <select id="<%=worker.mac_address%>Animation">
                         <option>Cartoon Eyes</option>

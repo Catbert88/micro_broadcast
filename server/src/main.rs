@@ -30,8 +30,8 @@ use std::ops::AddAssign;
 
 static PERSISTENT_WORKERS: phf::Map<&'static str, &'static str> = phf_map! {
     "EC:DA:3B:BF:46:9C" => "Georgia",
-    "key2" => "Asher",
-    "key3" => "Lila",
+    "EC:DA:3B:BF:49:2C" => "Asher",
+    "EC:DA:3B:BF:39:74" => "Lila",
     // Add more key-value pairs as needed
 };
 
@@ -222,45 +222,79 @@ async fn message_handler(State(state): State<Arc<AppState>>, extract::Json(reque
 
     println!("id: {}, message: {}", request.id, request.message);
 
-    for worker in state.micro_manager.lock().unwrap().workers.iter_mut() {
-        worker.current_cmd = Some("MESSAGE ".to_string() + &request.message);
-    }
+    if request.id == "Broadcast" {
+        for w in &mut state.micro_manager.lock().unwrap().workers {
+            w.current_cmd = Some("MESSAGE ".to_string() + &request.message);
+            //w.current_cmd = Some("MESSAGE ".to_string() + &"Line1\nLine2");
+        }
+        Json(RequestReceipt {status: "Complete".to_string() })
+    } else {
 
-    Json(RequestReceipt {status: "Complete".to_string() })
+        if let Some(w) = state.micro_manager.lock().unwrap().get_worker_mut(&request.id) {
+            w.current_cmd = Some("MESSAGE ".to_string() + &request.message);
+            Json(RequestReceipt {status: "Complete".to_string() })
+        } else {
+            Json(RequestReceipt {status: "Unavailable".to_string() })
+        }
+    }
 }
 
 async fn timer_start_handler(State(state): State<Arc<AppState>>, extract::Json(request): extract::Json<TimerRequest>) -> Json<RequestReceipt> {
 
     println!("id: {}, duration: {}", request.id, request.duration);
 
-    for worker in state.micro_manager.lock().unwrap().workers.iter_mut() {
-        worker.current_cmd = Some("TIMER ".to_string() + &request.duration);
+    if request.id == "Broadcast" {
+        for w in &mut state.micro_manager.lock().unwrap().workers {
+            w.current_cmd = Some("TIMER ".to_string() + &request.duration);
+        }
+        Json(RequestReceipt {status: "Complete".to_string() })
+    } else {
+        if let Some(w) = state.micro_manager.lock().unwrap().get_worker_mut(&request.id) {
+            w.current_cmd = Some("TIMER ".to_string() + &request.duration);
+            Json(RequestReceipt {status: "Complete".to_string() })
+        } else {
+            Json(RequestReceipt {status: "Unavailable".to_string() })
+        }
     }
-
-
-    Json(RequestReceipt {status: "Complete".to_string() })
 }
 
 async fn timer_add_handler(State(state): State<Arc<AppState>>, extract::Json(request): extract::Json<TimerRequest>) -> Json<RequestReceipt> {
 
     println!("id: {}, duration: {}", request.id, request.duration);
 
-    for worker in state.micro_manager.lock().unwrap().workers.iter_mut() {
-        worker.current_cmd = Some("TIMER ".to_string() + &request.duration);
+    if request.id == "Broadcast" {
+        for w in &mut state.micro_manager.lock().unwrap().workers {
+            w.current_cmd = Some("TIMER ".to_string() + &request.duration);
+        }
+        Json(RequestReceipt {status: "Complete".to_string() })
+    } else {
+        if let Some(w) = state.micro_manager.lock().unwrap().get_worker_mut(&request.id) {
+            w.current_cmd = Some("TIMER ".to_string() + &request.duration);
+            Json(RequestReceipt {status: "Complete".to_string() })
+        } else {
+            Json(RequestReceipt {status: "Unavailable".to_string() })
+        }
     }
 
-    Json(RequestReceipt {status: "Complete".to_string() })
 }
 
 async fn animation_handler(State(state): State<Arc<AppState>>, extract::Json(request): extract::Json<AnimationRequest>) -> Json<RequestReceipt> {
 
     println!("id: {}, animation: {}", request.id, request.animation);
 
-    for worker in state.micro_manager.lock().unwrap().workers.iter_mut() {
-        worker.current_cmd = Some("ANIMATE ".to_string() + &request.animation);
+    if request.id == "Broadcast" {
+        for w in &mut state.micro_manager.lock().unwrap().workers {
+            w.current_cmd = Some("ANIMATE ".to_string() + &request.animation);
+        }
+        Json(RequestReceipt {status: "Complete".to_string() })
+    } else {
+        if let Some(w) = state.micro_manager.lock().unwrap().get_worker_mut(&request.id) {
+            w.current_cmd = Some("ANIMATE ".to_string() + &request.animation);
+            Json(RequestReceipt {status: "Complete".to_string() })
+        } else {
+            Json(RequestReceipt {status: "Unavailable".to_string() })
+        }
     }
-
-    Json(RequestReceipt {status: "Complete".to_string() })
 }
 
 #[tokio::main]

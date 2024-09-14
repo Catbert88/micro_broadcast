@@ -42,6 +42,7 @@ use std::sync::Mutex;
 use std::sync::Arc;
 
 use embedded_graphics::mono_font::ascii::FONT_10X20;
+use embedded_graphics::mono_font::ascii::FONT_6X13;
 
 use ssd1306::{prelude::*, I2CDisplayInterface, Ssd1306};
 use wifi::wifi;
@@ -57,7 +58,7 @@ fn update_message<DI: WriteOnlyDataCommand, SIZE: ssd1306::prelude::DisplaySize,
     animation_switch.store(false, Ordering::Relaxed);
 
     let text_style = MonoTextStyleBuilder::new()
-        .font(&FONT_10X20)
+        .font(&FONT_6X13)
         .text_color(BinaryColor::On)
         .build();
 
