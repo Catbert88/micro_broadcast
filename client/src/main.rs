@@ -42,7 +42,7 @@ use embedded_graphics::{
 
 use ssd1306::mode::BufferedGraphicsMode;
 
-use std::sync::atomic::AtomicBool;
+//use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::sync::Mutex;
 use std::sync::Arc;
@@ -53,13 +53,57 @@ use embedded_graphics::mono_font::ascii::FONT_6X13;
 use ssd1306::{prelude::*, I2CDisplayInterface, Ssd1306};
 use wifi::wifi;
 
-fn update_animation<DI, SIZE, MODE>(display: &Arc<Mutex<Box<Ssd1306<DI, SIZE, MODE>>>>, animation: &str, animation_switch: &Arc<AtomicBool>) {
-    animation_switch.store(true, Ordering::Relaxed);
+
+use atomic_enum::atomic_enum;
+
+#[atomic_enum]
+#[derive(PartialEq)]
+enum Animation {
+    Off,
+    CartoonEyes,
+    Heart,
+    Unicorn,
 }
 
-fn update_message<DI: WriteOnlyDataCommand, SIZE: ssd1306::prelude::DisplaySize, MODE>(display: &Arc<Mutex<Box<Ssd1306<DI, SIZE, BufferedGraphicsMode<SIZE>>>>>, message: &str, animation_switch: &Arc<AtomicBool>) {
 
-    animation_switch.store(false, Ordering::Relaxed);
+struct Sprite<'a> {
+    bmp: Bmp<'a,BinaryColor>,
+    rows: usize,
+    cols: usize,
+    width: usize,
+    height: usize,
+    frame_count: usize,
+}
+
+impl<'a> Sprite<'a> {
+
+    fn new(bmp_data: &'a[u8], width: usize, height: usize, cols: usize, rows: usize, frame_count: usize) -> Self {
+        Sprite {
+            bmp: Bmp::<BinaryColor>::from_slice(bmp_data).unwrap(),
+            rows: rows,
+            cols: cols,
+            width: width,
+            height: height,
+            frame_count: frame_count,
+        }
+    }
+
+}
+
+fn update_animation<DI, SIZE, MODE>(_display: &Arc<Mutex<Box<Ssd1306<DI, SIZE, MODE>>>>, animation_name: &str, animation: &Arc<AtomicAnimation>) {
+    let animation_update = match animation_name {
+        "CartoonEyes" => Animation::CartoonEyes,
+        "Unicorn" => Animation::Unicorn,
+        "Heart" => Animation::Heart,
+        _ => panic!("Unkknown Animation"),
+    };
+
+    animation.store(animation_update, Ordering::Relaxed);
+}
+
+fn update_message<DI: WriteOnlyDataCommand, SIZE: ssd1306::prelude::DisplaySize, MODE>(display: &Arc<Mutex<Box<Ssd1306<DI, SIZE, BufferedGraphicsMode<SIZE>>>>>, message: &str, animation: &Arc<AtomicAnimation>) {
+
+    animation.store(Animation::Off, Ordering::Relaxed);
 
     let text_style = MonoTextStyleBuilder::new()
         .font(&FONT_6X13)
@@ -77,9 +121,9 @@ fn update_message<DI: WriteOnlyDataCommand, SIZE: ssd1306::prelude::DisplaySize,
 
 }
 
-fn update_timer<DI: WriteOnlyDataCommand, SIZE: ssd1306::prelude::DisplaySize, MODE>(display: &Arc<Mutex<Box<Ssd1306<DI, SIZE, BufferedGraphicsMode<SIZE>>>>>, timer: &str, animation_switch: &Arc<AtomicBool>) {
+fn update_timer<DI: WriteOnlyDataCommand, SIZE: ssd1306::prelude::DisplaySize, MODE>(display: &Arc<Mutex<Box<Ssd1306<DI, SIZE, BufferedGraphicsMode<SIZE>>>>>, timer: &str, animation: &Arc<AtomicAnimation>) {
 
-    animation_switch.store(false, Ordering::Relaxed);
+    animation.store(Animation::Off, Ordering::Relaxed);
 
     let text_style = MonoTextStyleBuilder::new()
         .font(&FONT_10X20)
@@ -104,15 +148,23 @@ fn update_timer<DI: WriteOnlyDataCommand, SIZE: ssd1306::prelude::DisplaySize, M
                 .draw(&mut **active_display)
                 .unwrap();
 
-            // Sector with 1 pixel wide white stroke with top-left point at (10, 20) with a diameter of 30
+            // Circle Outline
             Sector::new(Point::new(65, 1), 60, -90.0.deg(), 360.0.deg())
                 .into_styled(PrimitiveStyle::with_stroke(BinaryColor::On, 1))
                 .draw(&mut **active_display).unwrap();
 
-            // Sector with blue fill and no stroke with a translation applied
-            Sector::new(Point::new(65, 1), 60, -90.0.deg(), ratio.deg())
-                .into_styled(PrimitiveStyle::with_fill(BinaryColor::On))
-                .draw(&mut **active_display).unwrap();
+            if ratio > 0.0 {
+                // Circle Fill
+                Sector::new(Point::new(65, 1), 60, -90.0.deg(), ratio.deg())
+                    .into_styled(PrimitiveStyle::with_fill(BinaryColor::On))
+                    .draw(&mut **active_display).unwrap();
+
+            } else {
+
+                Text::with_baseline("Done!", Point::new(0, 44), text_style, Baseline::Top)
+                    .draw(&mut **active_display)
+                    .unwrap();
+            }
 
             active_display.flush().unwrap();
         }
@@ -180,49 +232,63 @@ fn main() -> Result<()> {
 
     let mut current_cmd = "".to_string();
 
-    let animation_display = display.clone();
-
-    let animation_switch = Arc::new(AtomicBool::new(true));
-
-    let animation_check = animation_switch.clone();
+    let animation = Arc::new(AtomicAnimation::new(Animation::Off));
 
     // animation thread
-    std::thread::spawn(move || {
+    std::thread::spawn({
+        let animation = animation.clone();
+        let animation_display = display.clone();
 
-        //let data = include_bytes!("../media/guardian.bmp");
-        let data = include_bytes!("../media/eyes.bmp");
-        // Parse the BMP file.
-        let bmp = Bmp::<BinaryColor>::from_slice(data).unwrap();
+        move || {
 
-        let width = 128;
-        let height = 64;
+            let cartoon_eyes = Arc::new(Sprite::new(include_bytes!("../media/eyes.bmp"), 128, 64, 10, 4, 40));
+            let heart        = Arc::new(Sprite::new(include_bytes!("../media/heart.bmp"), 128, 64, 4, 7, 28));
+            let unicorn      = Arc::new(Sprite::new(include_bytes!("../media/unicorn.bmp"), 128, 64, 4, 7, 28));
+            let off          = Arc::new(Sprite::new(include_bytes!("../media/heart.bmp"), 128, 64, 4, 7, 28));
 
-        loop {
-            for row in 0..4 {
-                for col in 0..10 {
+            loop {
 
-                    if animation_check.load(Ordering::Relaxed) {
+                let current_animation = animation.load(Ordering::Relaxed);
 
-                        let frame_origin = Point::new(col*width, row*height);
+                if current_animation == Animation::Off {
+                    std::thread::sleep(Duration::from_millis(100));
+                } else {
 
-                        let bounding_box = Rectangle::new(frame_origin, Size::new(width.try_into().unwrap(), height.try_into().unwrap() ));
+                    let sprite = match current_animation {
+                        Animation::Unicorn     => unicorn.clone(),
+                        Animation::Heart       => heart.clone(),
+                        Animation::CartoonEyes => cartoon_eyes.clone(),
+                        Animation::Off         => off.clone(),
+                    };
 
-                        let mut display = animation_display.lock().unwrap();
+                    for frame_index in 0..sprite.frame_count {
+                        // Check if the current animation is still valid
+                        if current_animation == animation.load(Ordering::Relaxed) {
 
-                        display.clear(BinaryColor::Off).unwrap();
+                            let row = frame_index / sprite.cols;
+                            let col = frame_index % sprite.cols;
 
-                        for point in bounding_box.points() {
-                            let pixel = bmp.pixel(point).unwrap();
+                            let frame_origin = Point::new((col*sprite.width) as i32, (row*sprite.height) as i32);
+                            let frame_bounds = Rectangle::new(frame_origin, Size::new(sprite.width as u32, sprite.height as u32 ));
 
-                            if pixel == BinaryColor::On {
-                                let draw_point = point - frame_origin;
-                                display.set_pixel(draw_point.x.try_into().unwrap(), draw_point.y.try_into().unwrap(), true);
+                            let mut display = animation_display.lock().unwrap();
+
+                            display.clear(BinaryColor::Off).unwrap();
+
+                            for point in frame_bounds.points() {
+                                let pixel = sprite.bmp.pixel(point).unwrap();
+
+                                if pixel == BinaryColor::On {
+                                    let draw_point = point - frame_origin;
+                                    display.set_pixel(draw_point.x.try_into().unwrap(), draw_point.y.try_into().unwrap(), true);
+                                }
                             }
+                            display.flush().unwrap();
+                        } else {
+                            break;
                         }
-
-                        display.flush().unwrap();
+                        std::thread::sleep(Duration::from_millis(10));
                     }
-                    std::thread::sleep(Duration::from_millis(10));
                 }
             }
         }
@@ -275,9 +341,9 @@ fn main() -> Result<()> {
                     {
                         if cmd != "PING" {
                             match cmd.split_once(' ') {
-                                Some(("ANIMATE", a)) => update_animation(&display, a, &animation_switch),
-                                Some(("MESSAGE", m)) => update_message::<I2CInterface<I2cDriver<'_>>, ssd1306::prelude::DisplaySize128x64, BufferedGraphicsMode<ssd1306::prelude::DisplaySize128x64>>(&display, m, &animation_switch),
-                                Some(("TIMER", t))   => update_timer::<I2CInterface<I2cDriver<'_>>, ssd1306::prelude::DisplaySize128x64, BufferedGraphicsMode<ssd1306::prelude::DisplaySize128x64>>(&display, t, &animation_switch),
+                                Some(("ANIMATE", a)) => update_animation(&display, a, &animation),
+                                Some(("MESSAGE", m)) => update_message::<I2CInterface<I2cDriver<'_>>, ssd1306::prelude::DisplaySize128x64, BufferedGraphicsMode<ssd1306::prelude::DisplaySize128x64>>(&display, m, &animation),
+                                Some(("TIMER", t))   => update_timer::<I2CInterface<I2cDriver<'_>>, ssd1306::prelude::DisplaySize128x64, BufferedGraphicsMode<ssd1306::prelude::DisplaySize128x64>>(&display, t, &animation),
                                 Some((_,_)) => panic!("Unrecognized command"),
                                 None => panic!("Unrecognized command"),
                             };

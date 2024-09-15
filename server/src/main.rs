@@ -141,7 +141,7 @@ impl MicroAnimation {
 
     async fn execute(&self, mut worker_connection: tokio::net::TcpStream) -> Result<(),Error>  {
         println!("Executing Animate Command");
-        let directive = "ANIMATE ".to_string();
+        let directive = "ANIMATE ".to_string() + &self.animation;
         worker_connection.write_all(&directive.into_bytes()).await
     }
 
