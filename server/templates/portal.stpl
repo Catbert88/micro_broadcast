@@ -148,6 +148,7 @@
 </head>
 <body>
     <h1>MB Control </h2>
+    <button onClick="window.location.reload();">Refresh Connections</button>
     <h2>Messaging</h2>
 
     <table>
@@ -169,8 +170,8 @@
             </tr>
             <% for worker in workers { %> 
             <tr>
-              <td class="id-column" style="color: <%=if worker.active {"green"} else {"red"} %>;"><%=worker.name()%></td>
-              <td class="message-column"><textarea id="<%=worker.mac_address%>Message" rows="4" cols="21" maxlength="80" spellcheck="true" placeholder="Message..."></textarea></td>
+              <td class="id-column" style="color: <%=if worker.active {"green"} else {"red"} %>;"><%=worker.name()%> <%= if let Some(MicroCommand::Message(_)) = worker.current_cmd {"->"} else {""} %></td>
+              <td class="message-column"><textarea id="<%=worker.mac_address%>Message" rows="4" cols="21" maxlength="80" spellcheck="true" placeholder="Message..."><%=MicroMessage::extract_last_message(&worker.current_cmd)%></textarea></td>
               <td class="action-column"><button onclick="sendMessage('<%=worker.mac_address%>')">Send</button></td>
             </tr>
             <% } %>
@@ -195,7 +196,7 @@
                     <input type="text" id="BroadcastTimerDuration" value="60" />
                     <button onclick="startTimer('Broadcast')">Start</button>
                 </td>
-                <td class="add-time-column"><button class="add-time-btn" onclick="AddTimer('Broadcast')">+5</button></td>
+                <td class="add-time-column"><button class="add-time-btn" onclick="addTimer('Broadcast')">+5</button></td>
                 <td></td>
             </tr>
             <tr class="divider-row">
@@ -203,13 +204,13 @@
             </tr>
             <% for worker in workers { %> 
             <tr>
-              <td class="id-column" style="color: <%=if worker.active {"green"} else {"red"} %>;"><%=worker.name()%></td>
+              <td class="id-column" style="color: <%=if worker.active {"green"} else {"red"} %>;"><%=worker.name()%> <%= if let Some(MicroCommand::Timer(_)) = worker.current_cmd {"->"} else {""} %></td>
                 <td class="duration-cell">
                     <input type="text" id="<%=worker.mac_address%>TimerDuration" value="60" />
                     <button onclick="startTimer('<%=worker.mac_address%>')">Start</button>
                 </td>
-                <td class="add-time-column"><button class="add-time-btn" onclick="AddTimer('<%=worker.mac_address%>')">+5</button></td>
-                <td>00:00</td>
+                <td class="add-time-column"><button class="add-time-btn" onclick="addTimer('<%=worker.mac_address%>')">+5</button></td>
+                <td><%= MicroTimer::extract_remaining_time(&worker.current_cmd)%></td>
             </tr>
             <% } %>
         </tbody>
@@ -229,7 +230,9 @@
                 <td class="id-column">Broadcast</td>
                 <td class="animation-cell">
                     <select id="BroadcastAnimation">
-                        <option>Cartoon Eyes</option>
+                        <option>CartoonEyes</option>
+                        <option>Unicorn</option>
+                        <option>Heart</option>
                     </select>
                     <button onclick="startAnimation('Broadcast')">Start</button>
                 </td>
@@ -239,12 +242,14 @@
             </tr>
             <% for worker in workers { %> 
             <tr>
-              <td class="id-column" style="color: <%=if worker.active {"green"} else {"red"} %>;"><%=worker.name()%></td>
+              <td class="id-column" style="color: <%=if worker.active {"green"} else {"red"} %>;"><%=worker.name()%> <%= if let Some(MicroCommand::Animation(_)) = worker.current_cmd {"->"} else {""} %></td>
                 <td class="animation-cell">
                   <select id="<%=worker.mac_address%>Animation">
-                        <option>Cartoon Eyes</option>
-                    </select>
-                    <button onclick="startAnimation('<%=worker.mac_address%>')">Start</button>
+                    <option <%=if MicroAnimation::extract_animation(&worker.current_cmd) == "CartoonEyes" {"selected"} else {""}%>>CartoonEyes</option>
+                    <option <%=if MicroAnimation::extract_animation(&worker.current_cmd) == "Unicorn" {"selected"} else {""}%>>Unicorn</option>
+                    <option <%=if MicroAnimation::extract_animation(&worker.current_cmd) == "Heart" {"selected"} else {""}%>>Heart</option>
+                  </select>
+                  <button onclick="startAnimation('<%=worker.mac_address%>')">Start</button>
                 </td>
             </tr>
             <% } %>
@@ -370,7 +375,7 @@
                 },
                 body: JSON.stringify({
                     id: id,
-                    duration: 5
+                    duration: "5"
                 }),
             })
             .then(response => response.json())

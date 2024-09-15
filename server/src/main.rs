@@ -20,6 +20,7 @@ use sailfish::TemplateOnce;
 
 use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
+use tokio::io::Error;
 use tokio::time::Duration;
 use tokio::time::timeout;
 
@@ -27,13 +28,135 @@ use axum::extract::State;
 
 use std::ops::AddAssign;
 
+use std::str::FromStr;
+
+//use std::collections::HashSet;
 
 static PERSISTENT_WORKERS: phf::Map<&'static str, &'static str> = phf_map! {
     "EC:DA:3B:BF:46:9C" => "Georgia",
     "EC:DA:3B:BF:49:2C" => "Asher",
     "EC:DA:3B:BF:39:74" => "Lila",
-    // Add more key-value pairs as needed
 };
+
+
+#[derive(Clone)]
+enum MicroCommand {
+    Ping(MicroPing),
+    Message(MicroMessage),
+    Timer(MicroTimer),
+    Animation(MicroAnimation),
+}
+
+impl MicroCommand {
+    async fn execute(&self, worker_connection: tokio::net::TcpStream) -> Result<(),Error> {
+        match self {
+            MicroCommand::Ping(cmd) => cmd.execute(worker_connection).await,
+            MicroCommand::Message(cmd) => cmd.execute(worker_connection).await,
+            MicroCommand::Timer(cmd) => cmd.execute(worker_connection).await,
+            MicroCommand::Animation(cmd) => cmd.execute(worker_connection).await,
+        }
+    }
+}
+
+#[derive(Clone)]
+struct MicroPing {
+}
+
+impl MicroPing {
+    async fn execute(&self, mut worker_connection: tokio::net::TcpStream) -> Result<(),Error>  {
+        println!("Executing Ping Command");
+        let directive = "PING".to_string();
+        worker_connection.write_all(&directive.into_bytes()).await
+    }
+}
+
+#[derive(Clone)]
+struct MicroMessage {
+    message: String,
+}
+
+impl MicroMessage {
+
+    async fn execute(&self, mut worker_connection: tokio::net::TcpStream) -> Result<(),Error>  {
+        println!("Executing Message Command");
+
+        let directive = "MESSAGE ".to_string() + &self.message;
+
+        //println!("broadcasting cmd '{}' to {}", &cmd.to_string(), worker.mac_address);
+        worker_connection.write_all(&directive.into_bytes()).await
+    }
+
+    fn raw(&self) -> String {
+        self.message.to_string()
+    }
+
+    fn extract_last_message(cmd: &Option<MicroCommand>) -> String {
+        if let Some(MicroCommand::Message(c)) = cmd {
+            c.raw()
+        } else {
+            "".to_string()
+        }
+    }
+}
+
+
+#[derive(Clone)]
+struct MicroTimer {
+    start: tokio::time::Instant,
+    duration: tokio::time::Duration,
+}
+
+
+impl MicroTimer {
+
+    async fn execute(&self, mut worker_connection: tokio::net::TcpStream) -> Result<(),Error>  {
+        println!("Executing Timer Command");
+        let remaining = self.duration.checked_sub(tokio::time::Instant::now().duration_since(self.start)).unwrap_or(tokio::time::Duration::new(0,0));
+        let directive = "TIMER ".to_string() + &remaining.as_secs().to_string() + "/" + &self.duration.as_secs().to_string();
+        worker_connection.write_all(&directive.into_bytes()).await
+    }
+
+    fn raw(&self) -> String {
+        match self.duration.checked_sub(tokio::time::Instant::now().duration_since(self.start)) {
+            Some(remaining) => remaining.as_secs().to_string(),
+            None => "00:00".to_string(),
+        }
+    }
+
+    fn extract_remaining_time(cmd: &Option<MicroCommand>) -> String {
+        if let Some(MicroCommand::Timer(c)) = cmd {
+            c.raw()
+        } else {
+            "00:00".to_string()
+        }
+    }
+}
+
+#[derive(Clone)]
+struct MicroAnimation {
+    animation: String
+}
+
+impl MicroAnimation {
+
+    async fn execute(&self, mut worker_connection: tokio::net::TcpStream) -> Result<(),Error>  {
+        println!("Executing Animate Command");
+        let directive = "ANIMATE ".to_string();
+        worker_connection.write_all(&directive.into_bytes()).await
+    }
+
+    fn raw(&self) -> String {
+        self.animation.to_string()
+    }
+
+    fn extract_animation(cmd: &Option<MicroCommand>) -> String {
+        if let Some(MicroCommand::Animation(c)) = cmd {
+            c.raw()
+        } else {
+            "".to_string()
+        }
+    }
+}
 
 #[derive(Clone)]
 struct MicroWorker {
@@ -42,7 +165,7 @@ struct MicroWorker {
     ip_address: Option<SocketAddr>,
     active: bool,
     persistent: bool,
-    current_cmd: Option<String>,
+    current_cmd: Option<MicroCommand>,
 }
 
 impl MicroWorker {
@@ -74,6 +197,7 @@ impl MicroWorker {
         }
     }
 }
+
 
 struct AppState {
     micro_manager: Arc<Mutex<MicroManager>>
@@ -149,6 +273,7 @@ impl MicroManager {
         self.workers.iter_mut().find(|w| w.mac_address == mac_address)
     }
 
+    #[allow(dead_code)]
     fn get_worker(&mut self, mac_address: &str) -> Option<&MicroWorker> {
         self.workers.iter().find(|w| w.mac_address == mac_address)
     }
@@ -222,16 +347,17 @@ async fn message_handler(State(state): State<Arc<AppState>>, extract::Json(reque
 
     println!("id: {}, message: {}", request.id, request.message);
 
+    let message_cmd = MicroMessage {message: request.message.to_string() };
+
     if request.id == "Broadcast" {
         for w in &mut state.micro_manager.lock().unwrap().workers {
-            w.current_cmd = Some("MESSAGE ".to_string() + &request.message);
-            //w.current_cmd = Some("MESSAGE ".to_string() + &"Line1\nLine2");
+            w.current_cmd = Some(MicroCommand::Message(message_cmd.clone()));
         }
         Json(RequestReceipt {status: "Complete".to_string() })
     } else {
 
         if let Some(w) = state.micro_manager.lock().unwrap().get_worker_mut(&request.id) {
-            w.current_cmd = Some("MESSAGE ".to_string() + &request.message);
+            w.current_cmd = Some(MicroCommand::Message(message_cmd.clone()));
             Json(RequestReceipt {status: "Complete".to_string() })
         } else {
             Json(RequestReceipt {status: "Unavailable".to_string() })
@@ -243,14 +369,16 @@ async fn timer_start_handler(State(state): State<Arc<AppState>>, extract::Json(r
 
     println!("id: {}, duration: {}", request.id, request.duration);
 
+    let timer_cmd = MicroTimer {start: tokio::time::Instant::now(), duration: tokio::time::Duration::from_secs(u64::from_str(&request.duration).unwrap()*60)};
+
     if request.id == "Broadcast" {
         for w in &mut state.micro_manager.lock().unwrap().workers {
-            w.current_cmd = Some("TIMER ".to_string() + &request.duration);
+            w.current_cmd = Some(MicroCommand::Timer(timer_cmd.clone()));
         }
         Json(RequestReceipt {status: "Complete".to_string() })
     } else {
         if let Some(w) = state.micro_manager.lock().unwrap().get_worker_mut(&request.id) {
-            w.current_cmd = Some("TIMER ".to_string() + &request.duration);
+            w.current_cmd = Some(MicroCommand::Timer(timer_cmd.clone()));
             Json(RequestReceipt {status: "Complete".to_string() })
         } else {
             Json(RequestReceipt {status: "Unavailable".to_string() })
@@ -262,14 +390,24 @@ async fn timer_add_handler(State(state): State<Arc<AppState>>, extract::Json(req
 
     println!("id: {}, duration: {}", request.id, request.duration);
 
+    let timer_cmd = MicroTimer {start: tokio::time::Instant::now(), duration: tokio::time::Duration::from_secs(u64::from_str(&request.duration).unwrap()*60)};
+
     if request.id == "Broadcast" {
         for w in &mut state.micro_manager.lock().unwrap().workers {
-            w.current_cmd = Some("TIMER ".to_string() + &request.duration);
+            if let Some(MicroCommand::Timer(ref mut existing_cmd)) = w.current_cmd {
+                existing_cmd.duration = existing_cmd.duration.checked_add(tokio::time::Duration::from_secs(u64::from_str(&request.duration).unwrap()*60)).unwrap();
+            } else {
+                w.current_cmd = Some(MicroCommand::Timer(timer_cmd.clone()));
+            }
         }
         Json(RequestReceipt {status: "Complete".to_string() })
     } else {
         if let Some(w) = state.micro_manager.lock().unwrap().get_worker_mut(&request.id) {
-            w.current_cmd = Some("TIMER ".to_string() + &request.duration);
+            if let Some(MicroCommand::Timer(ref mut existing_cmd)) = w.current_cmd {
+                existing_cmd.duration = existing_cmd.duration.checked_add(tokio::time::Duration::from_secs(u64::from_str(&request.duration).unwrap()*60)).unwrap();
+            } else {
+                w.current_cmd = Some(MicroCommand::Timer(timer_cmd.clone()));
+            }
             Json(RequestReceipt {status: "Complete".to_string() })
         } else {
             Json(RequestReceipt {status: "Unavailable".to_string() })
@@ -282,14 +420,16 @@ async fn animation_handler(State(state): State<Arc<AppState>>, extract::Json(req
 
     println!("id: {}, animation: {}", request.id, request.animation);
 
+    let animation_cmd = MicroAnimation {animation: request.animation};
+
     if request.id == "Broadcast" {
         for w in &mut state.micro_manager.lock().unwrap().workers {
-            w.current_cmd = Some("ANIMATE ".to_string() + &request.animation);
+            w.current_cmd = Some(MicroCommand::Animation(animation_cmd.clone()));
         }
         Json(RequestReceipt {status: "Complete".to_string() })
     } else {
         if let Some(w) = state.micro_manager.lock().unwrap().get_worker_mut(&request.id) {
-            w.current_cmd = Some("ANIMATE ".to_string() + &request.animation);
+            w.current_cmd = Some(MicroCommand::Animation(animation_cmd.clone()));
             Json(RequestReceipt {status: "Complete".to_string() })
         } else {
             Json(RequestReceipt {status: "Unavailable".to_string() })
@@ -346,33 +486,29 @@ async fn main() {
                     workers = micro_manager.lock().unwrap().workers.clone();
                 }
 
-                println!("Managing to {} worker(s)", workers.len());
+                //println!("Managing to {} worker(s)", workers.len());
                 for worker in workers
                 {
                     if let Some(ip_address) = worker.ip_address {
-                        if let Some(cmd) = worker.current_cmd.or(Some("PING".to_string()) ) {
-                            match timeout(Duration::from_millis(5000), tokio::net::TcpStream::connect(ip_address)).await {
-                                Ok(stream_s) => {
-                                    match stream_s {
-                                        Ok(mut stream) => {
-                                            println!("broadcasting cmd '{}' to {}", &cmd, worker.mac_address);
-                                            match stream.write_all(&cmd.into_bytes()).await {
-                                                Ok(()) => (),
-                                                Err(e) => {
-                                                    println!("removing worker after write failure. {}", e);
-                                                },
-                                            };
-                                        },
+                        match timeout(Duration::from_millis(5000), tokio::net::TcpStream::connect(ip_address)).await {
+                            Ok(stream_s) => {
+                                match stream_s {
+                                    Ok(stream) => {
+                                        match worker.current_cmd.unwrap_or(MicroCommand::Ping(MicroPing{})).execute(stream).await {
+                                            Ok(()) => (),
+                                            Err(e) => println!("failed: {}", e),
+                                        };
+                                    },
 
-                                        Err(e) => {
-                                            println!("removing worker after write failure. {}", e);
-                                        }
+                                    Err(e) => {
+                                        println!("removing worker after write failure. {}", e);
+                                        micro_manager.lock().unwrap().remove_worker(&worker.mac_address);
                                     }
-                                },
-                                Err(e) => {
-                                    println!("removing worker after connect failures. {}", e);
-                                    micro_manager.lock().unwrap().remove_worker(&worker.mac_address);
                                 }
+                            },
+                            Err(e) => {
+                                println!("removing worker after connect failures. {}", e);
+                                micro_manager.lock().unwrap().remove_worker(&worker.mac_address);
                             }
                         }
                     }
